@@ -36,6 +36,13 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run test:sites
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-qa-${{ github.event_name }}
+          path: outbox-to-stream/playground/qa
+          retention-days: 7
       - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request'
         with:
@@ -55,3 +62,5 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+      - name: Check published page
+        run: curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/ --output /dev/null
