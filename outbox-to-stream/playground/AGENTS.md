@@ -6,6 +6,7 @@ Keep the simulation vendor-neutral and separate from live infrastructure.
 Use simple, direct titles. Avoid slogans and promotional language.
 Use generic record examples and event types. Avoid payment-specific terminology.
 Publish the website with GitHub Pages.
+The public site root is a design-guide index. Publish this playground at `/design/eda/` and link back to the index.
 
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 

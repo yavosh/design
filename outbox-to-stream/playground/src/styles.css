@@ -26,6 +26,8 @@ svg { flex-shrink: 0; }
 .masthead { height: 72px; border-bottom: 1px solid #b7b6b7; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: inline-flex; align-items: center; gap: 13px; text-decoration: none; font-size: 23px; font-weight: 730; letter-spacing: -.7px; }
 .playbook-link { display: inline-flex; gap: 8px; align-items: center; font-size: 16px; }
+.header-links { display: flex; align-items: center; gap: 24px; }
+.guides-link { font-size: 14px; }
 .intro { margin: 33px 0 29px; }
 h1 { margin: 0; font-size: clamp(32px, 3.4vw, 51px); line-height: 1.15; font-weight: 760; letter-spacing: -1.9px; }
 .intro p { margin: 15px 0 0; font-size: 21px; line-height: 1.5; color: #40516a; }
@@ -169,7 +171,9 @@ dialog::backdrop { background: #10172866; backdrop-filter: blur(3px); }
 }
 @media (max-width: 600px) {
   .playground { padding: 0 20px; }
-  .masthead { height: 65px; }
+  .masthead { height: auto; min-height: 65px; padding-block: 14px; gap: 12px; flex-wrap: wrap; }
+  .header-links { width: 100%; gap: 22px; }
+  .guides-link { font-size: 12px; }
   .brand { font-size: 18px; gap: 8px; letter-spacing: -.5px; }
   .brand > .library-icon { width: 25px; }
   .playbook-link { font-size: 12px; gap: 3px; }

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { resolve, join } from "node:path";
+import { resolve, join, extname, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { scenarios } from "../src/simulation.js";
 
@@ -111,6 +112,29 @@ const harness = `<script type="module">(${checkPage.toString()})(${JSON.stringif
 const page = join(temporary, "check.html");
 writeFileSync(page, html.replace("</body>", `${harness}</body>`));
 
+const siteRoot = resolve("../../dist/site");
+const siteServer = createServer((request, response) => {
+  const pathname = new URL(request.url, "http://localhost").pathname;
+  const relative = pathname.slice("/design/".length);
+  const file = resolve(siteRoot, relative + (pathname.endsWith("/") ? "index.html" : ""));
+  const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
+  if (!pathname.startsWith("/design/") || !file.startsWith(siteRoot + sep) || !types[extname(file)]) {
+    response.writeHead(404).end();
+    return;
+  }
+  try {
+    const content = readFileSync(file);
+    response.writeHead(200, { "Content-Type": types[extname(file)] }).end(content);
+  } catch {
+    response.writeHead(404).end();
+  }
+});
+await new Promise((resolve, reject) => {
+  siteServer.once("error", reject);
+  siteServer.listen(0, "127.0.0.1", resolve);
+});
+const indexUrl = `http://127.0.0.1:${siteServer.address().port}/design/`;
+
 const chrome = spawn("google-chrome", [
   "--headless", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
   "--disable-background-networking", "--disable-sync", "--hide-scrollbars",
@@ -145,6 +169,16 @@ function send(method, params = {}, sessionId) {
     chrome.stdio[3].write(JSON.stringify({ id, method, params, sessionId }) + "\0");
   });
 }
+async function waitForHeading(title, sessionId) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const result = await send("Runtime.evaluate", {
+      expression: `document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`, returnByValue: true,
+    }, sessionId);
+    if (result.result.value) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`Page did not render: ${title}`);
+}
 const timeout = setTimeout(() => { chrome.kill(); throw new Error("Browser verification timed out"); }, 90000);
 try {
   const { targetId } = await send("Target.createTarget", { url: "about:blank" });
@@ -177,8 +211,30 @@ try {
     assert.equal(result.viewport.height, height);
     assert.deepEqual(consoleErrors, []);
     console.log(`${name}: all six scenarios and core controls passed; viewport ${width} × ${height}`);
+
+    await send("Page.navigate", { url: indexUrl }, sessionId);
+    await waitForHeading("Design guides", sessionId);
+    const indexState = await send("Runtime.evaluate", {
+      expression: "({href: document.querySelector('[data-guide=eda]').getAttribute('href'), overflow: document.documentElement.scrollWidth > innerWidth})",
+      returnByValue: true,
+    }, sessionId);
+    assert.equal(indexState.result.value.href, "./eda/");
+    assert.equal(indexState.result.value.overflow, false);
+    const indexCapture = await send("Page.captureScreenshot", {
+      format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 },
+    }, sessionId);
+    writeFileSync(resolve(`qa/index-${name}.png`), Buffer.from(indexCapture.data, "base64"));
+    await send("Runtime.evaluate", { expression: "document.querySelector('[data-guide=eda]').click()" }, sessionId);
+    await waitForHeading("Outbox event flow", sessionId);
+    const route = await send("Runtime.evaluate", { expression: "location.pathname", returnByValue: true }, sessionId);
+    assert.equal(route.result.value, "/design/eda/");
+    await send("Runtime.evaluate", { expression: "document.querySelector('.guides-link').click()" }, sessionId);
+    await waitForHeading("Design guides", sessionId);
+    assert.deepEqual(consoleErrors, []);
+    console.log(`${name}: design index, EDA asset loading, and return navigation passed`);
   }
 } finally {
   clearTimeout(timeout);
   chrome.kill();
+  siteServer.close();
 }

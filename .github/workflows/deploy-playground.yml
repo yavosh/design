@@ -1,4 +1,4 @@
-name: Build and deploy playground
+name: Build and deploy design guides
 
 on:
   push:
@@ -6,10 +6,14 @@ on:
     paths:
       - outbox-to-stream/playground/**
       - .github/workflows/deploy-playground.yml
+      - site/**
+      - scripts/build-site.mjs
   pull_request:
     paths:
       - outbox-to-stream/playground/**
       - .github/workflows/deploy-playground.yml
+      - site/**
+      - scripts/build-site.mjs
   workflow_dispatch:
 
 permissions:
@@ -35,6 +39,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: npm run build
+      - run: node ../../scripts/build-site.mjs
       - run: npm run test:sites
       - run: npm run test:browser
       - uses: actions/upload-artifact@v7
@@ -46,7 +51,7 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request'
         with:
-          path: outbox-to-stream/playground/dist/client
+          path: dist/site
 
   deploy:
     if: github.event_name != 'pull_request'
@@ -63,4 +68,6 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v5
       - name: Check published page
-        run: curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/ --output /dev/null
+        run: |
+          curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/ --output /dev/null
+          curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/eda/ --output /dev/null

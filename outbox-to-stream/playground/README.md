@@ -3,7 +3,7 @@
 Follow one event from a database transaction through a relay, stream, and two independent consumer groups.
 Use **Next step** or **Play** to advance. Select any component to inspect its simulated state.
 
-[Open the public playground](https://yavosh.github.io/design/).
+[Open the public playground](https://yavosh.github.io/design/eda/) or browse the [design guides](https://yavosh.github.io/design/).
 
 The playground includes six scenarios:
 
@@ -64,7 +64,9 @@ Pull requests run the build and tests without deploying.
 The workflow also checks interactions in Chrome at desktop and mobile viewports.
 Screenshots and browser results are saved as workflow artifacts.
 
-The published files come from `dist/client`. Relative asset URLs support the repository's `/design/` path.
+The playground builds into `dist/client`.
+The repository's `scripts/build-site.mjs` combines the design index and playground into the root `dist/site` directory.
+The index is published at `/design/`; the EDA playground is published at `/design/eda/`.
 
 ## Visual source
 

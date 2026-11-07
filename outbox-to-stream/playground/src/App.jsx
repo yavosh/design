@@ -69,7 +69,10 @@ export function App() {
       <a className="brand" href="#" onClick={event => { event.preventDefault(); selectScenario("normal"); }}>
         <IconCube size={34} stroke={1.6} /><span>Outbox Playground</span>
       </a>
-      <a className="playbook-link" href={playbook} target="_blank" rel="noreferrer">Read the playbook <IconArrowRight size={17} /></a>
+      <nav className="header-links" aria-label="Guide navigation">
+        <a className="guides-link" href="../">Design guides</a>
+        <a className="playbook-link" href={playbook} target="_blank" rel="noreferrer">Read the playbook <IconArrowRight size={17} /></a>
+      </nav>
     </header>
     <section className="intro" aria-labelledby="page-title">
       <h1 id="page-title">Outbox event flow</h1>
