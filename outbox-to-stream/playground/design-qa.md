@@ -6,8 +6,8 @@ final result: blocked
 
 - Source visual: `/Users/yavosh/Projects/yavosh/design/outbox-to-stream/design-options/1.png`.
 - Source dimensions: 1487 × 1058 pixels.
-- Accepted changes: the user requested the title "Outbox event flow" and generic record examples and event types.
-- Implementation: https://yavosh.github.io/design/.
+- Accepted changes: the user requested the title "Outbox event flow", generic record examples and event types, and a link back to the design-guide index.
+- Implementation: https://yavosh.github.io/design/eda/.
 - Browser evidence: [CI run 42336538176](https://github.com/yavosh/design/actions/runs/42336538176).
 - Screenshots: `desktop.png` and `mobile.png` in the [browser QA artifact](https://github.com/yavosh/design/actions/runs/42336538176/artifacts/13559945633).
 - Desktop viewport and capture: 1487 × 1058 CSS pixels, device scale factor 1.
