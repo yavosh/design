@@ -235,7 +235,7 @@ export function advance(previous) {
       consume(state, "deliveryJobs");
       state.active = "consumers";
       state.title = "Recovery gets a turn, even with new traffic";
-      state.explanation = "After 30 virtual seconds, The delivery consumer retries its own pending entry. It inserts the delivery job and event id together, then acknowledges the entry.";
+      state.explanation = "After 30 virtual seconds, the delivery consumer retries its own pending entry. It inserts the delivery job and event id together, then acknowledges the entry.";
       state.lesson = "Bounded scheduling opportunities prevent recovery work from starving behind new reads.";
       message = "Delivery consumer recovery committed one job, then acknowledged delivery.";
       break;

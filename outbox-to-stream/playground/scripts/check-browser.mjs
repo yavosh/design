@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
@@ -111,18 +111,74 @@ const harness = `<script type="module">(${checkPage.toString()})(${JSON.stringif
 const page = join(temporary, "check.html");
 writeFileSync(page, html.replace("</body>", `${harness}</body>`));
 
-for (const [name, width, height] of [["desktop", 1487, 1058], ["mobile", 390, 844]]) {
-  const output = execFileSync("google-chrome", [
-    "--headless", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
-    "--disable-background-networking", "--disable-sync", "--hide-scrollbars",
-    "--force-device-scale-factor=1", `--user-data-dir=${join(temporary, name)}`,
-    `--window-size=${width},${height}`, "--virtual-time-budget=20000", "--dump-dom",
-    `--screenshot=${resolve(`qa/${name}.png`)}`, pathToFileURL(page).href,
-  ], { encoding: "utf8", maxBuffer: 5 * 1024 * 1024, timeout: 60000 });
-  const encoded = output.match(/<output id="browser-check-result"[^>]*>([^<]+)<\/output>/)?.[1];
-  assert.ok(encoded, `${name}: Browser check did not complete`);
-  const result = JSON.parse(decodeURIComponent(encoded));
-  writeFileSync(`qa/${name}.json`, JSON.stringify(result, null, 2));
-  assert.ok(result.passed, `${name}: ${result.error}`);
-  console.log(`${name}: all six scenarios and core controls passed; viewport ${result.viewport.width} × ${result.viewport.height}`);
+const chrome = spawn("google-chrome", [
+  "--headless", "--no-sandbox", "--no-first-run", "--no-default-browser-check",
+  "--disable-background-networking", "--disable-sync", "--hide-scrollbars",
+  `--user-data-dir=${join(temporary, "profile")}`, "--remote-debugging-pipe",
+], { stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"] });
+let sequence = 0;
+let buffer = "";
+const pending = new Map();
+const consoleErrors = [];
+chrome.stdio[4].on("data", chunk => {
+  buffer += chunk.toString();
+  let end;
+  while ((end = buffer.indexOf("\0")) !== -1) {
+    const message = JSON.parse(buffer.slice(0, end));
+    buffer = buffer.slice(end + 1);
+    if (message.id) {
+      const request = pending.get(message.id);
+      pending.delete(message.id);
+      if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+      else request.resolve(message.result);
+    } else if (message.method === "Runtime.consoleAPICalled" && message.params.type === "error") {
+      consoleErrors.push(message.params.args.map(arg => arg.value ?? arg.description).join(" "));
+    } else if (message.method === "Runtime.exceptionThrown") {
+      consoleErrors.push(message.params.exceptionDetails.text);
+    }
+  }
+});
+function send(method, params = {}, sessionId) {
+  return new Promise((resolve, reject) => {
+    const id = ++sequence;
+    pending.set(id, { resolve, reject });
+    chrome.stdio[3].write(JSON.stringify({ id, method, params, sessionId }) + "\0");
+  });
+}
+const timeout = setTimeout(() => { chrome.kill(); throw new Error("Browser verification timed out"); }, 90000);
+try {
+  const { targetId } = await send("Target.createTarget", { url: "about:blank" });
+  const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
+  await send("Runtime.enable", {}, sessionId);
+  for (const [name, width, height] of [["desktop", 1487, 1058], ["mobile", 390, 844]]) {
+    consoleErrors.length = 0;
+    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: name === "mobile" }, sessionId);
+    await send("Page.navigate", { url: pathToFileURL(page).href }, sessionId);
+    let result;
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      const evaluated = await send("Runtime.evaluate", {
+        expression: 'document.getElementById("browser-check-result")?.textContent', returnByValue: true,
+      }, sessionId);
+      if (evaluated.result.value) {
+        result = JSON.parse(decodeURIComponent(evaluated.result.value));
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.ok(result, `${name}: Browser check did not complete`);
+    result.consoleErrors = [...consoleErrors];
+    writeFileSync(`qa/${name}.json`, JSON.stringify(result, null, 2));
+    const capture = await send("Page.captureScreenshot", {
+      format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 },
+    }, sessionId);
+    writeFileSync(resolve(`qa/${name}.png`), Buffer.from(capture.data, "base64"));
+    assert.ok(result.passed, `${name}: ${result.error}`);
+    assert.equal(result.viewport.width, width);
+    assert.equal(result.viewport.height, height);
+    assert.deepEqual(consoleErrors, []);
+    console.log(`${name}: all six scenarios and core controls passed; viewport ${width} × ${height}`);
+  }
+} finally {
+  clearTimeout(timeout);
+  chrome.kill();
 }
