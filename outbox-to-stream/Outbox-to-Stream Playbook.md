@@ -52,7 +52,7 @@ A service that changes state and then tells other services about it makes two wr
 - **Publish after commit.** The process can die, or the broker can be down, right after the commit. The change stands and the event is gone, silently and for good.
 - **Publish before commit.** The commit can fail after the event went out. Consumers act on a change that never happened.
 
-Publishing from cleanup code has the same problem. A broker outage can lose events and leave only an error log. For example, a lost payment event can prevent a webhook, omit a ledger entry, and undercount risk metrics.
+Publishing from cleanup code has the same problem. A broker outage can lose events and leave only an error log. For example, a lost record event can prevent a notification, leave a read model stale, and undercount usage metrics.
 
 The transactional outbox fixes this. The event becomes a row in the same database and the same transaction as the change. Delivering that row to the broker becomes a separate job that can retry for as long as it needs to.
 
@@ -69,7 +69,7 @@ The only step that touches two systems is the relay's append, and it can safely 
 3. **Publish.** The relay appends each row's stored bytes to the stream, unchanged, and then marks the row sent.
 4. **Fan out.** Each consuming service reads the stream through its own consumer group, so every group sees every event.
 5. **Apply.** The consumer applies the event in its own database, keyed so that a second copy does nothing. It acknowledges the entry only after that write succeeds.
-6. **Hand off slow work.** When the effect is an external call, such as an HTTP webhook, the consumer only inserts a job row. A separate worker with its own retry schedule makes the call. One slow merchant endpoint can't stall the stream, and you get a delivery history you can query.
+6. **Hand off slow work.** When the effect is an external call, such as an HTTP webhook, the consumer only inserts a job row. A separate worker with its own retry schedule makes the call. One slow destination endpoint can't stall the stream, and you get a delivery history you can query.
 
 ## Producer: writing the outbox row
 
@@ -79,13 +79,13 @@ The publish operation requires an active transaction and fails if there is none.
 
 The insert shares the transaction's fate. If it fails, the business change fails too. Don't catch the error and continue. An event you can't record is as serious as a change you can't record.
 
-Put the decision about whether to emit inside the operation that builds the event. For example, a payment event may require a terminal status. Validate that requirement before recording the event.
+Put the decision about whether to emit inside the operation that builds the event. For example, a record event may require a specific state transition. Validate that requirement before recording the event.
 
 ### Serialize once, send the stored bytes
 
 Build and serialize the complete envelope at publish time, store it in the row, and have the relay send those exact bytes. This is the detail the rest of the design depends on. If the relay rebuilt the envelope at send time, three things would break:
 
-- An event without a natural key would get a new random id on every retry. Consumers couldn't deduplicate it, and a merchant would receive the same webhook twice.
+- An event without a natural key would get a new random id on every retry. Consumers couldn't deduplicate it, and a destination would receive the same webhook twice.
 - The timestamp would become the relay's clock instead of the moment of the change.
 - The request id that ties the event to the original request would be lost.
 
@@ -189,14 +189,14 @@ This JSON example illustrates the fields. Choose a serialization format that eve
 ```json
 {
   "eventId": "6f1c0d3e-2b7a-3c51-9a7e-1d4b8c2f9e10",
-  "type": "PaymentExecuted",
+  "type": "RecordUpdated",
   "createdAt": "2026-11-06T09:41:27.512Z",
   "schemaVersion": 4,
-  "source": "payments",
+  "source": "records",
   "environment": "stage",
   "requestId": "c0a8017e-5f3b-4e1d-9b2a-7d6e5f4c3b2a",
   "headers": { "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
-  "payload": { "paymentId": "…", "status": "APPROVED", "amount": 10050, "currency": "EUR" }
+  "payload": { "recordId": "…", "revision": 4, "status": "ACTIVE" }
 }
 ```
 
@@ -210,17 +210,17 @@ This JSON example illustrates the fields. Choose a serialization format that eve
 | `environment` | The deployment environment. It's also part of the stream key. |
 | `requestId` | Correlation id of the originating request. Consumers copy it into their log context. |
 | `headers` | The W3C `traceparent` and nothing else. |
-| `payload` | The event record: identifiers, amounts, statuses and masked values. |
+| `payload` | The event record: identifiers, revisions, statuses and masked values. |
 
 ### Deterministic ids
 
-An event that describes a unique fact gets an id derived from that fact. For example, derive a name-based UUID from `PaymentExecuted:<paymentId>:<status>`. If a recovery path emits the same fact twice, both copies carry the same id and consumers keep one. Example keys:
+An event that describes a unique fact gets an id derived from that fact. For example, derive a name-based UUID from `RecordCreated:<recordId>`. If a recovery path emits the same fact twice, both copies carry the same id and consumers keep one. Example keys:
 
 | Event | Key |
 | --- | --- |
-| `PaymentExecuted` | type + payment id + terminal status |
-| `PaymentRefunded` | type + refund event id |
-| `RecurringCancelled` | type + payment id |
+| `RecordCreated` | type + record id |
+| `RecordUpdated` | type + record id + revision |
+| `RecordArchived` | type + record id + revision |
 | `AuditRecorded` | type + audit id |
 
 Choose keys carefully. Two genuinely different facts must never share one, or a consumer will drop the second.
@@ -235,11 +235,11 @@ The publisher copies the current W3C `traceparent` into the envelope headers. Co
 
 ### What a payload may carry
 
-An event persists in the outbox table, the stream, the dead-letter stream and every consumer's database. Treat a payload like a log line: identifiers, amounts, statuses and masked values only. Never put secrets, full card numbers or credentials in an event.
+An event persists in the outbox table, the stream, the dead-letter stream and every consumer's database. Treat a payload like a log line: identifiers, revisions, statuses and masked values only. Never put secrets, sensitive personal data or credentials in an event.
 
 ## Streams and naming
 
-Use one stream per producing domain, such as payments or audit. Define each consumer group's subscribed types explicitly. Consumers route on `type` and acknowledge genuinely unrelated types.
+Use one stream per producing domain, such as records or audit. Define each consumer group's subscribed types explicitly. Consumers route on `type` and acknowledge genuinely unrelated types.
 
 Do not acknowledge subscribed but unsupported types as unrelated. Retain them for retry or write them durably to a dead-letter stream before acknowledging them. Apply the same rule to unsupported versions of subscribed types. Deploy compatible consumers before producers emit new subscribed types. During rolling upgrades, every instance that can receive a type must support it or preserve it for recovery.
 
@@ -295,13 +295,13 @@ Four patterns support idempotent processing:
 | Pattern | How | Example use |
 | --- | --- | --- |
 | Insert or ignore | Unique key on (target, eventId). Insert, and do nothing on conflict. | Webhook jobs keyed by (endpoint, eventId). Audit rows keyed by audit id. |
-| Keyed upsert | Unique key on (businessId, eventId, kind). A repeat overwrites with the same values. | The merchant transaction ledger. |
-| Processed-keys claim | In the same transaction as the effect, insert the event key into a processed-keys table. Skip the effect if that insert did nothing. | Daily refund-ratio counters, where a second increment is wrong. |
+| Keyed upsert | Unique key on (businessId, eventId, kind). A repeat overwrites with the same values. | Record history. |
+| Processed-keys claim | In the same transaction as the effect, insert the event key into a processed-keys table. Skip the effect if that insert did nothing. | Daily update counters, where a second increment is wrong. |
 | Recompute | A scheduled job rebuilds the aggregate from source tables and overwrites it. | Nightly backstop for the same counters. |
 
 Don't copy
 
-A counter that adds each event's amount without a deduplication key counts redelivered events twice. Use the processed-keys claim for counters.
+A counter that increments for each event without a deduplication key counts redelivered events twice. Use the processed-keys claim for counters.
 
 ### Keep external calls out of the consumer
 
@@ -400,7 +400,7 @@ With a partitioned log that tracks committed offsets instead of per-entry acknow
 
 Rebuilding the envelope in the relay
 
-Each retry gets a new id, and merchants receive duplicate webhooks.
+Each retry gets a new id, and destinations receive duplicate webhooks.
 
 Counting attempts at claim time
 
