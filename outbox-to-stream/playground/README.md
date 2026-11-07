@@ -61,6 +61,9 @@ GitHub Actions runs the tests, builds the static client, and deploys it to GitHu
 The workflow runs on changes to this playground on `main` and `feat/outbox-playground`.
 Pull requests run the build and tests without deploying.
 
+The workflow also checks interactions in Chrome at desktop and mobile viewports.
+Screenshots and browser results are saved as workflow artifacts.
+
 The published files come from `dist/client`. Relative asset URLs support the repository's `/design/` path.
 
 ## Visual source

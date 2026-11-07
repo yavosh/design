@@ -6,46 +6,53 @@ final result: blocked
 
 - Source visual: `/Users/yavosh/Projects/yavosh/design/outbox-to-stream/design-options/1.png`.
 - Source dimensions: 1487 × 1058 pixels.
-- Target comparison viewport: 1487 × 1058 CSS pixels, device scale factor 1.
-- Target state: normal delivery, step 2, current claim `claim_01`.
-- Accepted copy changes: the user requested the title "Outbox event flow" and generic record examples and event types.
-- Implementation: `dist/playground.html`; Vite preview could not start.
-- Implementation screenshot: unavailable. No density normalization or rendered comparison was possible.
-- Full-view and focused-region comparisons: blocked; no browser-rendered evidence exists.
+- Accepted changes: the user requested the title "Outbox event flow" and generic record examples and event types.
+- Implementation: https://yavosh.github.io/design/.
+- Browser evidence: [CI run 42336538176](https://github.com/yavosh/design/actions/runs/42336538176).
+- Screenshots: `desktop.png` and `mobile.png` in the [browser QA artifact](https://github.com/yavosh/design/actions/runs/42336538176/artifacts/13559945633).
+- Desktop viewport and capture: 1487 × 1058 CSS pixels, device scale factor 1.
+- Mobile viewport and capture: 390 × 844 CSS pixels, device scale factor 1.
+- Capture state: normal delivery, step 2, current claim `claim_01`.
+- Density normalization: none needed; capture dimensions match their CSS viewports.
 
-## Blockers
+## Remaining blocker
 
-- The preview server failed with `listen EPERM` on both `0.0.0.0:4173` and `127.0.0.1:4173`.
-- The in-app Browser tool is unavailable in this session.
-- Chrome headless exited with code 134 before producing a screenshot.
-- Desktop image launches failed earlier in the session. Escalated launching was rejected by the approval policy.
+Chrome rendering and interaction checks now run successfully on GitHub Actions.
+Artifact downloads fail in the local session with a network connection error.
+The screenshots could not be opened alongside the source for visual comparison.
+Full-view and focused-region comparison therefore remain blocked.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: implemented from the selected source; browser comparison pending.
-- Spacing and layout rhythm: horizontal desktop layout and stacked narrow layout implemented; rendered verification pending.
-- Colors and tokens: ivory, navy, blue, mint, and amber tokens implemented; rendered verification pending.
+- Fonts and typography: implemented from the selected source; visual comparison pending.
+- Spacing and layout rhythm: horizontal desktop layout and stacked narrow layout implemented. Browser checks find no horizontal overflow across all scenario steps at either viewport.
+- Colors and tokens: ivory, navy, blue, mint, and amber tokens implemented; visual comparison pending.
 - Images and icons: source-library Tabler icons bundled with their license; no raster artwork required by this design.
-- Copy and content: the source heading, core controls, and event flow are implemented; scenario explanations added.
+- Copy and content: simpler title and generic record examples override the original mock, as requested.
 
-These are implementation facts, not visual acceptance findings.
+These are implementation and automated-check facts, not visual acceptance findings.
 
 ## Completed checks
 
 - Seven simulation tests pass across all six scenarios.
 - Production build passes and emits a standalone HTML preview.
-- Four Sites worker and packaging checks pass.
-- React server-render smoke check passes for the initial screen, six scenario options, icons, and primary controls.
-- Browser interactions, keyboard focus, responsive rendering, and console errors remain unverified.
+- Four worker and packaging checks pass.
+- Browser checks pass at both exact viewports for all scenarios, next step, play, pause, reset, scenario selection, failure dialog, state inspection, and timeline expansion.
+- Browser assertions verify rollback, final outbox status, generic event types, duplicate identity, deduplication, and consumer effects.
+- No uncaught page errors, unhandled rejections, or browser console errors were recorded by the checks.
+- The deployment workflow verifies the published page returns a successful HTTP response.
+- Manual visual comparison and keyboard focus review remain pending.
 
 ## Comparison history
 
-No visual comparison ran. No visual findings have been claimed or marked resolved.
+The first Chrome CLI capture used 1487 × 915 and 500 × 701 viewports.
+The capture script now uses the DevTools protocol to enforce exact viewport dimensions.
+The rerun passed at 1487 × 1058 and 390 × 844 and saved matching screenshots.
+No source-to-implementation visual comparison has run or been claimed.
 
 ## Remaining checks
 
-1. Open the implementation in an available browser.
-2. Capture normal delivery at step 2 using the target viewport.
-3. Compare the source and capture together, including focused diagram and typography regions.
-4. Test all scenarios, playback, pause, reset, dialogs, keyboard access, and narrow viewports.
-5. Check browser console errors and fix actionable visual issues before passing QA.
+1. Download the browser QA artifact and open its screenshots alongside the source.
+2. Compare the full view, diagram details, and typography while accounting for accepted copy changes.
+3. Review keyboard focus behavior.
+4. Fix actionable visual issues before marking visual QA passed.
