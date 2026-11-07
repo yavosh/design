@@ -1,0 +1,76 @@
+name: Build and deploy design guides
+
+on:
+  push:
+    branches: [main, feat/outbox-playground]
+    paths:
+      - outbox-to-stream/playground/**
+      - outbox-to-stream/Outbox-to-Stream Playbook.md
+      - .github/workflows/deploy-playground.yml
+      - site/**
+      - scripts/build-site.mjs
+  pull_request:
+    paths:
+      - outbox-to-stream/playground/**
+      - outbox-to-stream/Outbox-to-Stream Playbook.md
+      - .github/workflows/deploy-playground.yml
+      - site/**
+      - scripts/build-site.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playground-${{ github.event_name == 'pull_request' && github.ref || 'pages' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outbox-to-stream/playground
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: outbox-to-stream/playground/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      - run: node ../../scripts/build-site.mjs
+      - run: npm run test:sites
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-qa-${{ github.event_name }}
+          path: outbox-to-stream/playground/qa
+          retention-days: 7
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: dist/site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+      - name: Check published page
+        run: |
+          curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/ --output /dev/null
+          curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/eda/ --output /dev/null
+          curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/eda/guide/ --output /dev/null

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Architecture guides and interactive design examples." />
+    <meta name="theme-color" content="#fcfaf7" />
+    <title>Design guides</title>
+    <style>
+      :root { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #101728; background: #fcfaf7; -webkit-font-smoothing: antialiased; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      a { color: inherit; text-underline-offset: 5px; }
+      a:focus-visible { outline: 3px solid #3158ed; outline-offset: 5px; }
+      .page { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+      header { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid #b7b6b7; }
+      .brand { font-size: 22px; font-weight: 730; letter-spacing: -.6px; text-decoration: none; }
+      header > a:last-child { font-size: 14px; }
+      main { padding: 66px 0 90px; }
+      h1 { font-size: clamp(36px, 5vw, 52px); line-height: 1.15; letter-spacing: -1.8px; margin: 0 0 16px; }
+      .intro { font-size: 19px; line-height: 1.6; color: #506078; margin: 0 0 48px; }
+      .guides { list-style: none; padding: 0; margin: 0; border-top: 1px solid #d5d3d1; }
+      .guide { display: flex; justify-content: space-between; align-items: center; gap: 36px; padding: 30px 0; border-bottom: 1px solid #d5d3d1; }
+      h2 { font-size: 24px; line-height: 1.3; letter-spacing: -.5px; margin: 0 0 12px; }
+      h2 a { text-decoration: none; }
+      h2 a:hover { text-decoration: underline; }
+      .description { max-width: 560px; color: #506078; font-size: 16px; line-height: 1.7; margin: 0; }
+      .links { display: flex; flex-direction: column; align-items: center; gap: 17px; flex-shrink: 0; }
+      .open-guide { display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 0 21px; background: #2144f4; color: white; border: 1px solid #1835d5; border-radius: 8px; text-decoration: none; font-size: 15px; font-weight: 600; }
+      .open-guide:hover { background: #1634d1; }
+      .read-guide { font-size: 14px; }
+      @media (max-width: 600px) {
+        .page { padding: 0 22px; }
+        main { padding-top: 42px; }
+        .intro { font-size: 17px; margin-bottom: 30px; }
+        .guide { align-items: flex-start; flex-direction: column; gap: 24px; padding: 26px 0; }
+        h2 { font-size: 22px; }
+        .links { flex-direction: row; gap: 23px; flex-wrap: wrap; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <a class="brand" href="./" aria-label="Design guides home">Design</a>
+        <a href="https://github.com/yavosh/design">GitHub</a>
+      </header>
+      <main>
+        <h1>Design guides</h1>
+        <p class="intro">Architecture notes and interactive examples.</p>
+        <ul class="guides" aria-label="Published design guides">
+          <li class="guide">
+            <div>
+              <h2><a href="./eda/guide/">Event-driven architecture (EDA)</a></h2>
+              <p class="description">Transactional outbox and stream delivery. Explore commits, retries, duplicate events, and independent consumers.</p>
+            </div>
+            <div class="links">
+              <a class="open-guide" data-guide="eda" href="./eda/">Open playground</a>
+              <a class="read-guide" href="./eda/guide/">Read playbook</a>
+            </div>
+          </li>
+        </ul>
+      </main>
+    </div>
+  </body>
+</html>
