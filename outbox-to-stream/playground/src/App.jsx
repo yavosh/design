@@ -7,7 +7,9 @@ import {
 } from "./icons.jsx";
 import { advance, createSimulation, formatTime, isComplete, scenarios } from "./simulation.js";
 
-const playbook = "https://github.com/yavosh/design/blob/main/outbox-to-stream/Outbox-to-Stream%20Playbook.md";
+const standalone = globalThis.location?.protocol === "file:";
+const playbook = standalone ? "https://yavosh.github.io/design/eda/guide/" : "./guide/";
+const guidesIndex = standalone ? "https://yavosh.github.io/design/" : "../";
 
 function Consumer({ name, consumer, entries, onInspect }) {
   const pending = entries.length - consumer.acknowledged.length;
@@ -70,7 +72,7 @@ export function App() {
         <IconCube size={34} stroke={1.6} /><span>Outbox Playground</span>
       </a>
       <nav className="header-links" aria-label="Guide navigation">
-        <a className="guides-link" href="../">Design guides</a>
+        <a className="guides-link" href={guidesIndex}>Design guides</a>
         <a className="playbook-link" href={playbook} target="_blank" rel="noreferrer">Read the playbook <IconArrowRight size={17} /></a>
       </nav>
     </header>

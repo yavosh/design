@@ -232,6 +232,45 @@ try {
     await waitForHeading("Design guides", sessionId);
     assert.deepEqual(consoleErrors, []);
     console.log(`${name}: design index, EDA asset loading, and return navigation passed`);
+
+    await send("Runtime.evaluate", { expression: "document.querySelector('.read-guide').click()" }, sessionId);
+    await waitForHeading("Outbox-to-Stream Playbook", sessionId);
+    const guideState = await send("Runtime.evaluate", {
+      expression: `({
+        overflow: document.documentElement.scrollWidth > innerWidth,
+        sections: document.querySelectorAll('article h2').length,
+        tables: document.querySelectorAll('.table-scroll table').length,
+        codeBlocks: document.querySelectorAll('pre code').length,
+        contentsValid: [...document.querySelectorAll('.guide-sidebar a, .mobile-toc a')].every(link => document.getElementById(link.hash.slice(1))),
+        playground: new URL(document.querySelector('.playground-link').href).pathname
+      })`,
+      returnByValue: true,
+    }, sessionId);
+    assert.equal(guideState.result.value.overflow, false);
+    assert.ok(guideState.result.value.sections >= 10);
+    assert.ok(guideState.result.value.tables > 0);
+    assert.ok(guideState.result.value.codeBlocks > 0);
+    assert.equal(guideState.result.value.contentsValid, true);
+    assert.equal(guideState.result.value.playground, "/design/eda/");
+    if (name === "mobile") {
+      await send("Runtime.evaluate", { expression: "document.querySelector('.mobile-toc summary').click()" }, sessionId);
+    }
+    await send("Runtime.evaluate", {
+      expression: `document.querySelector('${name === "mobile" ? ".mobile-toc" : ".guide-sidebar"} a').click()`,
+    }, sessionId);
+    const anchor = await send("Runtime.evaluate", { expression: "location.hash", returnByValue: true }, sessionId);
+    assert.ok(anchor.result.value.length > 1);
+    await send("Runtime.evaluate", { expression: "document.querySelector('.mobile-toc').open = false; window.scrollTo(0, 0)" }, sessionId);
+    const guideCapture = await send("Page.captureScreenshot", {
+      format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width, height, scale: 1 },
+    }, sessionId);
+    writeFileSync(resolve(`qa/guide-${name}.png`), Buffer.from(guideCapture.data, "base64"));
+    await send("Runtime.evaluate", { expression: "document.querySelector('.playground-link').click()" }, sessionId);
+    await waitForHeading("Outbox event flow", sessionId);
+    await send("Runtime.evaluate", { expression: "document.querySelector('.guides-link').click()" }, sessionId);
+    await waitForHeading("Design guides", sessionId);
+    assert.deepEqual(consoleErrors, []);
+    console.log(`${name}: HTML guide, contents anchors, tables, code blocks, and playground navigation passed`);
   }
 } finally {
   clearTimeout(timeout);

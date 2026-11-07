@@ -4,6 +4,7 @@ Follow one event from a database transaction through a relay, stream, and two in
 Use **Next step** or **Play** to advance. Select any component to inspect its simulated state.
 
 [Open the public playground](https://yavosh.github.io/design/eda/) or browse the [design guides](https://yavosh.github.io/design/).
+Read the formatted [HTML playbook](https://yavosh.github.io/design/eda/guide/).
 
 The playground includes six scenarios:
 
@@ -31,7 +32,7 @@ open dist/playground.html
 ```
 
 The HTML preview includes its JavaScript, CSS, and icons. It runs without a server.
-The playbook link opens GitHub.
+The navigation links open the published guide and index when using the standalone preview.
 
 ## Check
 
@@ -67,6 +68,7 @@ Screenshots and browser results are saved as workflow artifacts.
 The playground builds into `dist/client`.
 The repository's `scripts/build-site.mjs` combines the design index and playground into the root `dist/site` directory.
 The index is published at `/design/`; the EDA playground is published at `/design/eda/`.
+The playbook is generated from Markdown at `/design/eda/guide/`, with section navigation, formatted tables, and code blocks.
 
 ## Visual source
 

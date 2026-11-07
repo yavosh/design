@@ -5,12 +5,14 @@ on:
     branches: [main, feat/outbox-playground]
     paths:
       - outbox-to-stream/playground/**
+      - outbox-to-stream/Outbox-to-Stream Playbook.md
       - .github/workflows/deploy-playground.yml
       - site/**
       - scripts/build-site.mjs
   pull_request:
     paths:
       - outbox-to-stream/playground/**
+      - outbox-to-stream/Outbox-to-Stream Playbook.md
       - .github/workflows/deploy-playground.yml
       - site/**
       - scripts/build-site.mjs
@@ -71,3 +73,4 @@ jobs:
         run: |
           curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/ --output /dev/null
           curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/eda/ --output /dev/null
+          curl --fail --retry 5 --retry-delay 3 --retry-all-errors https://yavosh.github.io/design/eda/guide/ --output /dev/null
