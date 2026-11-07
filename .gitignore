@@ -1,0 +1,8 @@
+.DS_Store
+.env
+.env.*
+.envrc
+*.auto.tfvars
+credentials.json
+*.key
+*.pem
