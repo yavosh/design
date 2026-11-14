@@ -171,10 +171,14 @@ function send(method, params = {}, sessionId) {
 }
 async function waitForHeading(title, sessionId) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const result = await send("Runtime.evaluate", {
-      expression: `document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`, returnByValue: true,
-    }, sessionId);
-    if (result.result.value) return;
+    try {
+      const result = await send("Runtime.evaluate", {
+        expression: `document.readyState === 'complete' && document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`, returnByValue: true,
+      }, sessionId);
+      if (result.result.value) return;
+    } catch (error) {
+      if (!/Cannot find context|Execution context was destroyed|Inspected target navigated/.test(error.message)) throw error;
+    }
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   throw new Error(`Page did not render: ${title}`);
