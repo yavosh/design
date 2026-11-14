@@ -25,6 +25,19 @@ export function renderGuide(markdown) {
   renderer.table = function (token) {
     return `<div class="table-scroll" role="region" aria-label="Reference table" tabindex="0">${Renderer.prototype.table.call(this, token)}</div>\n`;
   };
+  renderer.code = function (token) {
+    if (token.lang !== "steps") return Renderer.prototype.code.call(this, token);
+    // An unindented line titles a box; each two-space-indented line is one numbered step in it.
+    const boxes = [];
+    for (const line of token.text.split("\n")) {
+      if (!line.trim()) continue;
+      if (!line.startsWith("  ")) boxes.push({ title: line.trim(), steps: [] });
+      else if (boxes.length) boxes.at(-1).steps.push(line.trim());
+      else throw new Error("A steps block must start with a box title.");
+    }
+    const items = boxes.map(({ title, steps }) => `<li><p class="steps-title">${escapeHtml(title)}</p><ol>${steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></li>`);
+    return `<ol class="steps">${items.join("\n")}</ol>\n`;
+  };
   renderer.paragraph = function (token) {
     if (principles.has(token.text)) return `<p class="principle-label">${escapeHtml(token.text)}</p>\n`;
     if (callouts.has(token.text)) {

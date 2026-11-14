@@ -54,7 +54,7 @@ export function App() {
   const inspectorData = inspector === "Instance" ? { instance: state.instance, auditLog: state.log }
     : inspector === "Step rows" ? state.rows
     : inspector === "Dispatcher" ? { status: state.dispatcher, virtualSeconds: state.time, workers: state.workers, unhostedStages: state.unhosted }
-    : inspector === "Handler" ? { ...state.handler, lock: state.lock, businessWrites: state.business, outbox: state.outbox }
+    : inspector === "Handler" ? { ...state.handler, lock: state.lock, businessWrites: state.business, events: state.events }
     : state.external;
 
   return <main className="playground">
@@ -69,7 +69,7 @@ export function App() {
     </header>
     <section className="intro" aria-labelledby="page-title">
       <h1 id="page-title">Workflow step flow</h1>
-      <p>Run one record through its steps, and see what the engine does when a step waits, fails, or dies.</p>
+      <p>Run one account through its onboarding steps, and see what the engine does when a step waits, fails, or dies.</p>
     </section>
     <div className="scenario-bar">
       <label htmlFor="scenario">Scenario</label>
@@ -91,13 +91,14 @@ export function App() {
           <span className={`status status-${state.instance.status.toLowerCase()}`}>{state.instance.status}</span>
         </span>
         <span className="chips">
-          {state.rows.map(item => <span className={`chip chip-${item.status.toLowerCase()}`} key={item.step}>{item.status === "COMPLETED" && <IconCheck size={14} />}{item.step}</span>)}
+          {state.rows.map(item => <span className={`chip chip-${item.status.toLowerCase()} ${item === row ? "chip-current" : ""}`} key={item.step}>{item.status === "COMPLETED" && <IconCheck size={14} />}{item.step}</span>)}
           {next && <span className="chip chip-next">{next}</span>}
         </span>
       </button>
       <div className="pipeline">
-        <button className={`step-row node ${state.active === "row" ? "is-active" : ""} ${row.status === "FAILED" ? "has-warning" : ""}`} onClick={() => inspect("Step rows")}>
+        <button aria-current={state.active === "row" ? "step" : undefined} className={`step-row node ${state.active === "row" ? "is-active" : ""} ${row.status === "FAILED" ? "has-warning" : ""}`} onClick={() => inspect("Step rows")}>
           <span className="node-heading"><IconDatabase size={34} stroke={1.6} /><strong>Step row</strong></span>
+          {state.active === "row" && <span className="active-tag">Active</span>}
           <span className="event-token has-event">{row.step}</span>
           <span className="row-status"><span className={`status status-${row.status.toLowerCase()}`}>{row.status}</span>{due && <span className="status status-due">DUE</span>}</span>
           <span className="row-fields">
@@ -108,22 +109,25 @@ export function App() {
           </span>
         </button>
         <Connector />
-        <button className={`dispatcher node ${state.active === "dispatcher" ? "is-active" : ""} ${state.unhosted.length ? "has-warning" : ""}`} onClick={() => inspect("Dispatcher")}>
+        <button aria-current={state.active === "dispatcher" ? "step" : undefined} className={`dispatcher node ${state.active === "dispatcher" ? "is-active" : ""} ${state.unhosted.length ? "has-warning" : ""}`} onClick={() => inspect("Dispatcher")}>
           <span className="node-heading"><IconClock size={34} stroke={1.6} /><strong>Dispatcher</strong></span>
+          {state.active === "dispatcher" && <span className="active-tag">Active</span>}
           <span className="node-state">{state.dispatcher}</span>
           <span className="workers">{state.workers.map(worker => <span className={`worker ${worker.alive ? "worker-live" : "worker-down"}`} key={worker.node}>{worker.node}<span>{worker.alive ? "live" : worker.leaseExpiresAt > state.time ? `down · lease to ${formatTime(worker.leaseExpiresAt)}` : "lease expired"}</span></span>)}</span>
           {state.unhosted.length > 0 && <span className="node-note">Unhosted: {state.unhosted.join(", ")}</span>}
         </button>
         <Connector />
-        <button className={`handler node ${state.active === "handler" ? "is-active" : ""} ${warnings.includes(state.handler.phase) ? "has-warning" : ""}`} onClick={() => inspect("Handler")}>
+        <button aria-current={state.active === "handler" ? "step" : undefined} className={`handler node ${state.active === "handler" ? "is-active" : ""} ${warnings.includes(state.handler.phase) ? "has-warning" : ""}`} onClick={() => inspect("Handler")}>
           <span className="node-heading"><IconSettings size={34} stroke={1.6} /><strong>Handler</strong></span>
+          {state.active === "handler" && <span className="active-tag">Active</span>}
           <span className="node-state">{state.handler.phase}{state.handler.worker ? ` on ${state.handler.worker}` : ""}</span>
-          <span className="lock-line"><IconLock size={16} /><code>{state.lock?.key ?? "resource_7"}</code>{state.lock ? `held by ${state.lock.holder}` : "free"}</span>
+          <span className="lock-line"><IconLock size={16} /><code>{state.lock?.key ?? "workspace_name_7"}</code>{state.lock ? `held by ${state.lock.holder}` : "free"}</span>
           <span className="node-note">{outcome ? `Outcome: ${outcome.type}${outcome.target ? ` → ${outcome.target}` : ""}` : "No outcome to record"}</span>
         </button>
         <Connector />
-        <button className={`external node ${state.active === "external" ? "is-active" : ""} ${["transient error", "no response"].includes(state.external.lastResult) ? "has-warning" : ""}`} onClick={() => inspect("External system")}>
+        <button aria-current={state.active === "external" ? "step" : undefined} className={`external node ${state.active === "external" ? "is-active" : ""} ${["transient error", "no response"].includes(state.external.lastResult) ? "has-warning" : ""}`} onClick={() => inspect("External system")}>
           <span className="node-heading"><IconServer size={34} stroke={1.6} /><strong>External system</strong></span>
+          {state.active === "external" && <span className="active-tag">Active</span>}
           <span className={`event-token ${state.external.effects[row.step] ? "has-event" : ""}`}>{state.external.effects[row.step] ? "Effect applied once" : "No effect yet"}</span>
           <span className="node-note">{calls} {calls === 1 ? "call" : "calls"} for this step{state.external.lastResult ? ` · last: ${state.external.lastResult}` : ""}</span>
         </button>
@@ -156,7 +160,7 @@ export function App() {
       </ol>
     </section>
     <div className="takeaway"><IconInfoCircle size={19} /><p>{state.lesson}</p></div>
-    <footer className="page-footer"><span>One instance. One active step. Each effect once.</span><span>Example settings · Virtual time · No broker takes part</span></footer>
+    <footer className="page-footer"><span>One instance. One active step. Each effect once.</span><span>Example settings · Virtual time · Events never move the flow</span></footer>
     <dialog ref={failureDialog} aria-labelledby="failure-title" className="scenario-dialog" onClick={event => { if (event.target === event.currentTarget) failureDialog.current.close(); }}>
       <div className="dialog-heading"><div><span className="eyebrow">LEARN BY EXPERIMENTING</span><h2 id="failure-title">What could go wrong?</h2></div><button aria-label="Close scenarios" className="icon-button" onClick={() => failureDialog.current.close()}><IconX /></button></div>
       <p className="dialog-description">Choose a scenario. Each experiment starts fresh and explains its recovery.</p>

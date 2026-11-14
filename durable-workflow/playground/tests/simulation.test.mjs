@@ -64,10 +64,10 @@ test("one step run claims, works, and records, then the terminal step completes 
   const worked = advance(claimed);
   assert.equal(row(worked).status, "RUNNING");
   assert.equal(worked.handler.outcome.type, "Done");
-  assert.equal(worked.outbox.at(-1).type, "AllocationReleased");
+  assert.equal(worked.events.at(-1).type, "NameReleased");
   const recorded = advance(worked);
-  assert.equal(row(recorded, "FULFILMENT/RELEASE_ALLOCATION").status, "COMPLETED");
-  assert.deepEqual(row(recorded), { ...row(recorded), step: "DISPATCH/HAND_OFF", status: "PENDING", nextAt: 0 });
+  assert.equal(row(recorded, "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
+  assert.deepEqual(row(recorded), { ...row(recorded), step: "WELCOME/SEND", status: "PENDING", nextAt: 0 });
   assert.equal(recorded.log.at(-1).wasOverride, false);
   const complete = advance(recorded);
   assert.equal(complete.instance.status, "COMPLETED");
@@ -79,15 +79,15 @@ test("the full flow follows the playbook table", () => {
   assert.equal(scenarios.flow.steps.length, 13);
   assert.equal(state.instance.status, "COMPLETED");
   assert.deepEqual(state.rows.map(item => item.step), [
-    "INTAKE/NORMALISE", "ENRICHMENT/HYDRATE", "VALIDATION/VALIDATE", "ALLOCATION/ALLOCATE", "REVIEW/REQUEST",
-    "ALLOCATION/ADJUST", "FULFILMENT/APPLY", "FULFILMENT/APPLY_CORRECTION", "FULFILMENT/RELEASE_ALLOCATION", "DISPATCH/HAND_OFF",
+    "SIGNUP/NORMALISE", "PROFILE/ENRICH", "VERIFICATION/VERIFY", "WORKSPACE/RESERVE_NAME", "REVIEW/REQUEST",
+    "WORKSPACE/ADJUST", "WORKSPACE/CREATE", "WORKSPACE/IMPORT_DATA", "WORKSPACE/RELEASE_NAME", "WELCOME/SEND",
   ]);
   assert.ok(state.rows.every(item => item.status === "COMPLETED"));
-  assert.equal(row(state, "ALLOCATION/ALLOCATE").attempts, 1);
+  assert.equal(row(state, "WORKSPACE/RESERVE_NAME").attempts, 1);
   assert.equal(row(state, "REVIEW/REQUEST").deferCount, 1);
   assert.equal(row(state, "REVIEW/REQUEST").attempts, 0);
-  assert.equal(row(state, "FULFILMENT/APPLY_CORRECTION").dispatchCount, 2);
-  assert.equal(state.external.calls["FULFILMENT/APPLY_CORRECTION"], 1);
+  assert.equal(row(state, "WORKSPACE/IMPORT_DATA").dispatchCount, 2);
+  assert.equal(state.external.calls["WORKSPACE/IMPORT_DATA"], 1);
   assert.equal(state.log.filter(entry => entry.wasOverride).length, 0);
   assert.equal(run("flow", 10).rows.at(-1).status, "RUNNING");
 });
@@ -100,21 +100,21 @@ test("a retry charges one attempt and waits for the backoff timer", () => {
   assert.equal(reclaimed.time, 60);
   assert.equal(row(reclaimed).dispatchCount, 2);
   const state = run("retry");
-  assert.equal(row(state, "FULFILMENT/RELEASE_ALLOCATION").status, "COMPLETED");
-  assert.equal(state.external.calls["FULFILMENT/RELEASE_ALLOCATION"], 2);
-  assert.equal(state.external.effects["FULFILMENT/RELEASE_ALLOCATION"], 1);
+  assert.equal(row(state, "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
+  assert.equal(state.external.calls["WORKSPACE/RELEASE_NAME"], 2);
+  assert.equal(state.external.effects["WORKSPACE/RELEASE_NAME"], 1);
 });
 
 test("a busy lock defers the step without charging an attempt", () => {
   const worked = run("defer", 2);
   assert.equal(worked.handler.outcome.type, "Defer");
-  assert.equal(worked.external.calls["FULFILMENT/RELEASE_ALLOCATION"], undefined);
+  assert.equal(worked.external.calls["WORKSPACE/RELEASE_NAME"], undefined);
   const recorded = advance(worked);
   assert.deepEqual(row(recorded), { ...row(recorded), status: "PENDING", attempts: 0, deferCount: 1, nextAt: 30 });
   const due = advance(recorded);
   assert.equal(due.time, 30);
   assert.equal(due.lock, null);
-  assert.equal(row(run("defer"), "FULFILMENT/RELEASE_ALLOCATION").status, "COMPLETED");
+  assert.equal(row(run("defer"), "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
 });
 
 test("a park waits for an absolute time and changes no counter", () => {
@@ -124,30 +124,30 @@ test("a park waits for an absolute time and changes no counter", () => {
   assert.equal(state.time, 21600);
   assert.equal(formatTime(state.time), "6:00:00");
   assert.equal(row(state, "SCHEDULE/PARK").status, "COMPLETED");
-  assert.equal(state.instance.currentStep, "VALIDATION/VALIDATE");
+  assert.equal(state.instance.currentStep, "VERIFICATION/VERIFY");
 });
 
 test("a declared alternate is not an override, and an undeclared target is", () => {
   const declared = run("branch", 3).log.at(-1);
   assert.deepEqual(
     { target: declared.target, defaultTarget: declared.defaultTarget, wasOverride: declared.wasOverride },
-    { target: "REVIEW/REQUEST", defaultTarget: "FULFILMENT/APPLY", wasOverride: false },
+    { target: "REVIEW/REQUEST", defaultTarget: "WORKSPACE/CREATE", wasOverride: false },
   );
   assert.ok(declared.reason);
   const state = run("branch");
   const undeclared = state.log.at(-1);
   assert.deepEqual(
     { target: undeclared.target, defaultTarget: undeclared.defaultTarget, wasOverride: undeclared.wasOverride },
-    { target: "FULFILMENT/APPLY", defaultTarget: "ALLOCATION/ADJUST", wasOverride: true },
+    { target: "WORKSPACE/CREATE", defaultTarget: "WORKSPACE/ADJUST", wasOverride: true },
   );
   assert.ok(undeclared.reason);
-  assert.equal(row(state, "ALLOCATION/ADJUST"), undefined);
+  assert.equal(row(state, "WORKSPACE/ADJUST"), undefined);
   assert.equal(state.log.filter(entry => entry.wasOverride).length, 1);
 });
 
 test("a killed process re-drives from the claim's timer with no second external call", () => {
   const crashed = run("crash", 2);
-  const step = "FULFILMENT/APPLY_CORRECTION";
+  const step = "WORKSPACE/IMPORT_DATA";
   assert.deepEqual(row(crashed), { ...row(crashed), status: "RUNNING", dispatchCount: 1, nextAt: 150 });
   assert.equal(crashed.workers[0].alive, false);
   assert.equal(crashed.log.filter(entry => entry.step === step && entry.dispatch === 1).length, 0);
@@ -158,7 +158,7 @@ test("a killed process re-drives from the claim's timer with no second external 
   const state = run("crash");
   assert.equal(row(state, step).status, "COMPLETED");
   assert.equal(state.external.calls[step], 1);
-  assert.equal(state.outbox.filter(event => event.type === "CorrectionApplied").length, 1);
+  assert.equal(state.events.filter(event => event.type === "DataImported").length, 1);
   assert.deepEqual(state.log.filter(entry => entry.step === step && entry.actor === "handler").map(entry => entry.dispatch), [2]);
 });
 
@@ -173,7 +173,7 @@ test("an exhausted retry budget fails the instance until an operator retries the
   assert.equal(retried.instance.status, "ACTIVE");
   assert.equal(retried.log.at(-1).actor, "operator");
   const state = run("exhausted");
-  assert.equal(row(state, "FULFILMENT/RELEASE_ALLOCATION").status, "COMPLETED");
+  assert.equal(row(state, "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
   assert.equal(state.instance.status, "ACTIVE");
 });
 
@@ -196,8 +196,8 @@ test("a handler that ignores cancellation times out and its host terminates", ()
   assert.ok(reclaimed.workers[0].leaseExpiresAt <= reclaimed.time, "The lease expires without a deregistration");
   assert.equal(reclaimed.handler.worker, "worker-b");
   const state = run("timeout");
-  assert.equal(row(state, "FULFILMENT/RELEASE_ALLOCATION").status, "COMPLETED");
-  assert.equal(state.external.effects["FULFILMENT/RELEASE_ALLOCATION"], 1);
+  assert.equal(row(state, "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
+  assert.equal(state.external.effects["WORKSPACE/RELEASE_NAME"], 1);
 });
 
 test("an unhosted stage stalls with no error until a worker registers for it", () => {

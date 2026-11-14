@@ -39,6 +39,15 @@ code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospac
 code { font-size: .84em; background: #eeece6; padding: 3px 6px; border-radius: 4px; color: #274362; }
 pre { margin: 22px 0; padding: 22px; background: #172334; color: #e5edf5; border-radius: 9px; overflow-x: auto; font-size: 13px; line-height: 1.75; overflow-wrap: normal; tab-size: 2; }
 pre code { background: none; color: inherit; font-size: inherit; padding: 0; border-radius: 0; }
+.steps { list-style: none; max-width: 68ch; margin: 22px 0; padding: 0; }
+.steps > li { position: relative; margin: 0 0 26px; padding: 0; border: 1px solid #dadbd8; border-radius: 8px; }
+.steps > li:last-child { margin-bottom: 0; }
+.steps > li + li::before { content: ""; position: absolute; left: 29px; top: -26px; height: 22px; border-left: 2px solid #9aa39b; }
+.steps > li + li::after { content: ""; position: absolute; left: 25px; top: -14px; width: 8px; height: 8px; border: solid #9aa39b; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.steps-title { max-width: none; margin: 0; padding: 10px 16px; border-bottom: 1px solid #dedfd9; border-radius: 7px 7px 0 0; background: #eeefe9; color: #35473d; font-size: 14px; font-weight: 700; line-height: 1.5; }
+.steps ol { list-style: none; counter-reset: step; margin: 0; padding: 7px 16px 9px; }
+.steps ol > li { counter-increment: step; position: relative; margin: 0; padding: 7px 0 7px 36px; font-size: 15px; line-height: 1.6; }
+.steps ol > li::before { content: counter(step); position: absolute; left: 0; top: 7px; width: 22px; height: 22px; border: 1px solid #b9cdb9; border-radius: 50%; background: #edf2e9; color: #31543b; font-size: 12px; font-weight: 700; line-height: 22px; text-align: center; }
 .table-scroll { overflow-x: auto; max-width: 100%; margin: 22px 0; border: 1px solid #dadbd8; border-radius: 8px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.65; min-width: 590px; }
 th { background: #eeefe9; text-align: left; color: #35473d; font-weight: 700; }
@@ -83,4 +92,7 @@ table code { font-size: 12px; }
   .table-scroll { overflow: visible; }
   table { min-width: 0; font-size: 9pt; }
   tr { break-inside: avoid; }
+  .steps > li, .steps ol > li { break-inside: avoid; }
+  .steps-title { background: none; border-bottom-color: black; color: black; }
+  .steps ol > li::before { background: none; border-color: black; color: black; }
 }

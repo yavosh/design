@@ -1,42 +1,42 @@
 export const definition = {
-  key: "record-flow",
+  key: "account-onboarding",
   version: 3,
-  start: "INTAKE/NORMALISE",
-  terminals: ["DISPATCH/HAND_OFF"],
+  start: "SIGNUP/NORMALISE",
+  terminals: ["WELCOME/SEND"],
   steps: {
-    "INTAKE/NORMALISE": { next: "ENRICHMENT/HYDRATE" },
-    "ENRICHMENT/HYDRATE": { next: "VALIDATION/VALIDATE", alternates: ["SCHEDULE/PARK"] },
-    "SCHEDULE/PARK": { next: "VALIDATION/VALIDATE" },
-    "VALIDATION/VALIDATE": { next: "ALLOCATION/ALLOCATE" },
-    "ALLOCATION/ALLOCATE": { next: "FULFILMENT/APPLY", alternates: ["REVIEW/REQUEST"] },
-    "REVIEW/REQUEST": { next: "ALLOCATION/ADJUST" },
-    "ALLOCATION/ADJUST": { next: "FULFILMENT/APPLY" },
-    "FULFILMENT/APPLY": { next: "FULFILMENT/RELEASE_ALLOCATION", alternates: ["FULFILMENT/APPLY_CORRECTION"] },
-    "FULFILMENT/APPLY_CORRECTION": { next: "FULFILMENT/RELEASE_ALLOCATION" },
-    "FULFILMENT/RELEASE_ALLOCATION": { next: "DISPATCH/HAND_OFF" },
-    "DISPATCH/HAND_OFF": { next: null },
+    "SIGNUP/NORMALISE": { next: "PROFILE/ENRICH" },
+    "PROFILE/ENRICH": { next: "VERIFICATION/VERIFY", alternates: ["SCHEDULE/PARK"] },
+    "SCHEDULE/PARK": { next: "VERIFICATION/VERIFY" },
+    "VERIFICATION/VERIFY": { next: "WORKSPACE/RESERVE_NAME" },
+    "WORKSPACE/RESERVE_NAME": { next: "WORKSPACE/CREATE", alternates: ["REVIEW/REQUEST"] },
+    "REVIEW/REQUEST": { next: "WORKSPACE/ADJUST" },
+    "WORKSPACE/ADJUST": { next: "WORKSPACE/CREATE" },
+    "WORKSPACE/CREATE": { next: "WORKSPACE/RELEASE_NAME", alternates: ["WORKSPACE/IMPORT_DATA"] },
+    "WORKSPACE/IMPORT_DATA": { next: "WORKSPACE/RELEASE_NAME" },
+    "WORKSPACE/RELEASE_NAME": { next: "WELCOME/SEND" },
+    "WELCOME/SEND": { next: null },
   },
 };
 
-// Each step's external effect and the event its handler emits through the outbox.
+// Each step's external effect and the event its handler emits.
 const effects = {
-  "INTAKE/NORMALISE": ["record normalised", "RecordNormalised"],
-  "ENRICHMENT/HYDRATE": ["record hydrated", "RecordHydrated"],
-  "SCHEDULE/PARK": ["record scheduled", "RecordScheduled"],
-  "VALIDATION/VALIDATE": ["record validated", "RecordValidated"],
-  "ALLOCATION/ALLOCATE": ["allocation made", "AllocationMade"],
+  "SIGNUP/NORMALISE": ["sign-up normalised", "SignupNormalised"],
+  "PROFILE/ENRICH": ["profile enriched", "ProfileEnriched"],
+  "SCHEDULE/PARK": ["start scheduled", "StartScheduled"],
+  "VERIFICATION/VERIFY": ["account verified", "AccountVerified"],
+  "WORKSPACE/RESERVE_NAME": ["workspace name reserved", "NameReserved"],
   "REVIEW/REQUEST": ["review applied", "ReviewApplied"],
-  "ALLOCATION/ADJUST": ["allocation adjusted", "AllocationAdjusted"],
-  "FULFILMENT/APPLY": ["change applied", "ChangeApplied"],
-  "FULFILMENT/APPLY_CORRECTION": ["correction applied", "CorrectionApplied"],
-  "FULFILMENT/RELEASE_ALLOCATION": ["allocation released", "AllocationReleased"],
-  "DISPATCH/HAND_OFF": ["record handed off", "RecordHandedOff"],
+  "WORKSPACE/ADJUST": ["name reservation adjusted", "ReservationAdjusted"],
+  "WORKSPACE/CREATE": ["workspace created", "WorkspaceCreated"],
+  "WORKSPACE/IMPORT_DATA": ["data imported", "DataImported"],
+  "WORKSPACE/RELEASE_NAME": ["name reservation released", "NameReleased"],
+  "WELCOME/SEND": ["welcome message sent", "WelcomeSent"],
 };
 
 const reasons = {
-  "SCHEDULE/PARK": "The record is due at a later time.",
-  "REVIEW/REQUEST": "The record needs a review.",
-  "FULFILMENT/APPLY_CORRECTION": "The change needs a correction.",
+  "SCHEDULE/PARK": "The account starts at a later time.",
+  "REVIEW/REQUEST": "The workspace name needs a review.",
+  "WORKSPACE/IMPORT_DATA": "The account has data to import.",
 };
 
 const GRACE = 30;
@@ -44,75 +44,75 @@ const CANCEL_GRACE = 10;
 const RETRY_DELAY = 60;
 const DEFER_DELAY = 30;
 const LEASE = 60;
-const LOCK = "resource_7";
+const LOCK = "workspace_name_7";
 const stageOf = key => key.split("/")[0];
 const stages = [...new Set(Object.keys(definition.steps).map(stageOf))];
 const terminal = row => row.status === "COMPLETED" || row.status === "FAILED";
 
-const toAllocation = ["INTAKE/NORMALISE", "ENRICHMENT/HYDRATE", "VALIDATION/VALIDATE"];
-const toFulfilment = [...toAllocation, "ALLOCATION/ALLOCATE", "FULFILMENT/APPLY"];
+const verified = ["SIGNUP/NORMALISE", "PROFILE/ENRICH", "VERIFICATION/VERIFY"];
+const created = [...verified, "WORKSPACE/RESERVE_NAME", "WORKSPACE/CREATE"];
 
 export const scenarios = {
   normal: {
     name: "One step run",
     description: "Follow one step through claim, work, and record, then complete the flow.",
-    start: "FULFILMENT/RELEASE_ALLOCATION", path: toFulfilment,
+    start: "WORKSPACE/RELEASE_NAME", path: created,
     steps: ["claim", "work", "record", "run"],
   },
   flow: {
     name: "A full flow, step by step",
-    description: "Run one record from intake to hand-off, with a retry, a deferral, two branches, and a crash.",
-    start: "INTAKE/NORMALISE", path: [],
+    description: "Run one account from sign-up to the welcome message, with a retry, a deferral, two branches, and a crash.",
+    start: "SIGNUP/NORMALISE", path: [],
     steps: ["run", "run", "run", "runRetry", "runAlternate", "runWait", "run", "run", "runAlternate", "runCrash", "run", "run", "run"],
   },
   retry: {
     name: "External system fails",
     description: "Charge one attempt, wait for the backoff timer, and run the step again.",
-    failure: true, start: "FULFILMENT/RELEASE_ALLOCATION", path: toFulfilment,
+    failure: true, start: "WORKSPACE/RELEASE_NAME", path: created,
     steps: ["claim", "workRetry", "record", "timerDue", "claim", "work", "record"],
   },
   defer: {
     name: "The lock is busy",
     description: "Wait for another instance to release a shared lock, without using the retry budget.",
-    failure: true, start: "FULFILMENT/RELEASE_ALLOCATION", path: toFulfilment, lock: "wf_002",
-    intro: "Another instance, wf_002, holds the lock for the same resource.",
+    failure: true, start: "WORKSPACE/RELEASE_NAME", path: created, lock: "wf_002",
+    intro: "Another instance, wf_002, holds the lock for the same workspace name.",
     steps: ["claim", "work", "record", "timerDue", "claim", "work", "record"],
   },
   park: {
     name: "A planned wait",
     description: "Park a step until a known time, then continue when the timer falls due.",
-    start: "SCHEDULE/PARK", path: ["INTAKE/NORMALISE", "ENRICHMENT/HYDRATE"],
+    start: "SCHEDULE/PARK", path: ["SIGNUP/NORMALISE", "PROFILE/ENRICH"],
     steps: ["claim", "workPark", "record", "timerDue", "claim", "work", "record"],
   },
   branch: {
     name: "Declared branch and undeclared override",
     description: "Compare a routine branch with a target that the definition does not list.",
-    start: "ALLOCATION/ALLOCATE", path: toAllocation,
+    start: "WORKSPACE/RESERVE_NAME", path: verified,
     steps: ["claim", "workAlternate", "record", "claim", "workOverride", "record"],
   },
   crash: {
     name: "Process dies mid-handler",
     description: "Kill the worker after its work commits, then watch the timer re-drive the step.",
-    failure: true, start: "FULFILMENT/APPLY_CORRECTION", path: toFulfilment,
+    failure: true, start: "WORKSPACE/IMPORT_DATA", path: created,
     steps: ["claim", "crash", "timerDue", "claim", "work", "record"],
   },
   exhausted: {
     name: "Retry budget runs out",
     description: "Fail the step and its instance, then resume the flow with an operator retry.",
-    failure: true, start: "FULFILMENT/RELEASE_ALLOCATION", path: toFulfilment, seed: { attempts: 9 },
+    failure: true, start: "WORKSPACE/RELEASE_NAME", path: created, seed: { attempts: 9 },
     intro: "Nine of its ten attempts have already failed.",
     steps: ["claim", "workRetry", "record", "pollMiss", "operatorRetry", "claim", "work", "record"],
   },
   timeout: {
     name: "Handler ignores cancellation",
     description: "Cancel a step that overruns, abandon it, and terminate its host process.",
-    failure: true, start: "FULFILMENT/RELEASE_ALLOCATION", path: toFulfilment,
+    failure: true, start: "WORKSPACE/RELEASE_NAME", path: created,
     steps: ["claim", "cancel", "abandon", "hostTerminates", "timerDue", "claim", "work", "record"],
   },
   unhosted: {
     name: "No worker hosts a stage",
     description: "Let a step stall with no error, then find it with the worker registry.",
-    failure: true, start: "ALLOCATION/ALLOCATE", path: toAllocation,
+    failure: true, start: "WORKSPACE/RESERVE_NAME", path: verified,
     workers: stages.filter(stage => stage !== "REVIEW"),
     intro: "No worker group hosts the REVIEW stage.",
     steps: ["runAlternate", "pollMiss", "coverage", "workerJoins", "claim", "work", "record"],
@@ -155,13 +155,13 @@ export function createSimulation(scenario = "normal") {
   const state = {
     scenario, step: 0, time: 0,
     instance: {
-      id: "wf_001", entityKind: "RECORD", entityId: "record_001",
+      id: "wf_001", entityKind: "ACCOUNT", entityId: "account_001",
       definitionKey: definition.key, definitionVersion: definition.version,
       status: "ACTIVE", currentStep: definition.start, lastProgressAt: 0, failureReason: null,
     },
     rows: [createRow(definition.start, 0)],
     log: [], workers: [workers("worker-a"), workers("worker-b")], lock: null, unhosted: [],
-    external: { calls: {}, effects: {}, lastResult: null }, business: [], outbox: [],
+    external: { calls: {}, effects: {}, lastResult: null }, business: [], events: [],
     handler: { phase: "Idle", worker: null, outcome: null }, dispatcher: "Polling for due rows",
     title: "Start with one due step row", lesson: "This is a simulation. No database or external system is connected.",
     timeline: [], active: "row",
@@ -179,7 +179,7 @@ export function createSimulation(scenario = "normal") {
   state.external.lastResult = null;
   state.handler = { phase: "Idle", worker: null, outcome: null };
   state.dispatcher = "Polling for due rows";
-  state.explanation = `${config.path.length ? `One record, record_001, has reached ${config.start}.` : "One record, record_001, starts its flow. The engine created the instance and its first step row in one transaction."} ${config.intro ?? "The step row is PENDING and due."} Take the next step to see what the engine does.`;
+  state.explanation = `${config.path.length ? `One account, account_001, has reached ${config.start}.` : "One account, account_001, starts its onboarding. The engine created the instance and its first step row in one transaction."} ${config.intro ?? "The step row is PENDING and due."} Take the next step to see what the engine does.`;
   return state;
 }
 
@@ -210,7 +210,7 @@ function work(state, { fail, target, reason } = {}) {
     return {
       active: "handler", kind: "warning",
       title: "The lock is busy. The handler returns Defer.",
-      explanation: `Another instance, ${state.lock.holder}, holds the lock for the same resource. The handler can't take the lock, so it calls nothing. It returns Defer for 30 seconds.`,
+      explanation: `Another instance, ${state.lock.holder}, holds the lock for the same workspace name. The handler can't take the lock, so it calls nothing. It returns Defer for 30 seconds.`,
       summary: "The lock was busy, so the handler returned Defer.",
       lesson: "A busy lock is contention, not a failure. Defer charges no attempt.",
       message: `Lock ${LOCK} is held by ${state.lock.holder}. Outcome: Defer for 30 seconds.`,
@@ -233,7 +233,7 @@ function work(state, { fail, target, reason } = {}) {
     return {
       active: "handler",
       title: "The handler returns Park until a known time",
-      explanation: `The record is due later. The handler returns Park with an absolute time: virtual ${formatTime(until)}. It charges nothing and holds nothing while it waits.`,
+      explanation: `The account starts later. The handler returns Park with an absolute time: virtual ${formatTime(until)}. It charges nothing and holds nothing while it waits.`,
       summary: `The handler returned Park until virtual ${formatTime(until)}.`,
       lesson: "Park is a planned wait. A long park is healthy; a repeated defer is backpressure.",
       message: `Outcome: Park until virtual ${formatTime(until)}.`,
@@ -260,7 +260,7 @@ function work(state, { fail, target, reason } = {}) {
   state.external.lastResult = found ? "already done" : "ok";
   if (!state.business.includes(row.step)) {
     state.business.push(row.step);
-    state.outbox.push({ eventId: `evt_${String(state.outbox.length + 1).padStart(3, "0")}`, type: event, instanceId: state.instance.id });
+    state.events.push({ eventId: `evt_${String(state.events.length + 1).padStart(3, "0")}`, type: event, instanceId: state.instance.id });
   }
   const outcome = target ? { type: "Done", target, reason } : { type: "Done" };
   state.handler = { ...state.handler, phase: "Returned Done", outcome };
@@ -626,7 +626,7 @@ const actions = {
   workRetry: state => work(state, { fail: "transient" }),
   workPark: state => work(state, { fail: "park" }),
   workAlternate: state => work(state, alternate(state)),
-  workOverride: state => work(state, { target: "FULFILMENT/APPLY", reason: "The review confirmed the allocation, so the handler skipped ALLOCATION/ADJUST." }),
+  workOverride: state => work(state, { target: "WORKSPACE/CREATE", reason: "The review confirmed the name, so the handler skipped WORKSPACE/ADJUST." }),
   run: state => run(state),
   runRetry: state => run(state, { fail: "transient" }),
   runWait: state => run(state, { fail: "notReady" }),

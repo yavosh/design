@@ -1,6 +1,6 @@
 # Workflow Playground
 
-Follow one record through a durable workflow engine: a step row, a dispatcher, a handler, and an external system.
+Follow one account through onboarding in a durable workflow engine: a step row, a dispatcher, a handler, and an external system.
 Use **Next step** or **Play** to advance. Select any component to inspect its simulated state.
 
 [Open the public playground](https://yavosh.github.io/design/workflow/) or browse the [design guides](https://yavosh.github.io/design/).

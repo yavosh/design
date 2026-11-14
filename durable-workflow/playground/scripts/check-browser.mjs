@@ -66,20 +66,20 @@ async function checkPage(scenarios) {
       check(Object.values(external.effects).every(count => count === 1), `An effect repeated: ${key}`);
       if (key === "normal" || key === "flow") check(instance.status === "COMPLETED", `Instance did not complete: ${key}`);
       if (key === "flow") check(rows.length === 10 && row("REVIEW/REQUEST").deferCount === 1, "Flow did not follow the playbook table");
-      if (key === "retry") check(row("FULFILMENT/RELEASE_ALLOCATION").attempts === 1, "Retry did not charge one attempt");
-      if (key === "defer") check(row("FULFILMENT/RELEASE_ALLOCATION").deferCount === 1 && row("FULFILMENT/RELEASE_ALLOCATION").attempts === 0, "Defer charged an attempt");
+      if (key === "retry") check(row("WORKSPACE/RELEASE_NAME").attempts === 1, "Retry did not charge one attempt");
+      if (key === "defer") check(row("WORKSPACE/RELEASE_NAME").deferCount === 1 && row("WORKSPACE/RELEASE_NAME").attempts === 0, "Defer charged an attempt");
       if (key === "park") check(dispatcher.virtualSeconds === 21600 && row("SCHEDULE/PARK").status === "COMPLETED", "Park did not wait for its time");
       if (key === "branch") check(auditLog.filter(entry => entry.wasOverride).length === 1, "Expected one undeclared transition");
       if (key === "crash") {
-        const step = "FULFILMENT/APPLY_CORRECTION";
+        const step = "WORKSPACE/IMPORT_DATA";
         check(external.calls[step] === 1 && row(step).dispatchCount === 2, "Crash recovery repeated the external call");
         check(auditLog.every(entry => entry.step !== step || entry.dispatch !== 1), "Crashed dispatch has an audit entry");
       }
       if (key === "exhausted") {
-        check(row("FULFILMENT/RELEASE_ALLOCATION").status === "COMPLETED" && instance.status === "ACTIVE", "Operator retry did not resume the flow");
+        check(row("WORKSPACE/RELEASE_NAME").status === "COMPLETED" && instance.status === "ACTIVE", "Operator retry did not resume the flow");
         check(auditLog.some(entry => entry.actor === "operator"), "Operator retry is not in the audit log");
       }
-      if (key === "timeout") check(!dispatcher.workers[0].alive && row("FULFILMENT/RELEASE_ALLOCATION").lastError === "timeout", "Timeout was not recorded");
+      if (key === "timeout") check(!dispatcher.workers[0].alive && row("WORKSPACE/RELEASE_NAME").lastError === "timeout", "Timeout was not recorded");
       if (key === "unhosted") check(dispatcher.workers.length === 3 && dispatcher.unhostedStages.length === 0, "Stage is still unhosted");
       if (scenario.steps.length > 3) {
         document.querySelector(".timeline .text-button").click();
@@ -186,7 +186,7 @@ function send(method, params = {}, sessionId) {
 async function waitForHeading(title, sessionId) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const result = await send("Runtime.evaluate", {
-      expression: `document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`, returnByValue: true,
+      expression: `document.readyState === 'complete' && document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`, returnByValue: true,
     }, sessionId);
     if (result.result.value) return;
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -249,6 +249,7 @@ try {
       sections: document.querySelectorAll('article h2').length,
       tables: document.querySelectorAll('.table-scroll table').length,
       codeBlocks: document.querySelectorAll('pre code').length,
+      stepBoxes: document.querySelectorAll('.steps > li').length,
       contentsValid: [...document.querySelectorAll('.guide-sidebar a, .mobile-toc a')].every(link => document.getElementById(link.hash.slice(1))),
       section: document.querySelector('.breadcrumbs span').textContent,
       playground: new URL(document.querySelector('.playground-link').href).pathname
@@ -257,8 +258,9 @@ try {
     assert.ok(guideState.sections >= 10);
     assert.ok(guideState.tables > 0);
     assert.ok(guideState.codeBlocks > 0);
+    assert.equal(guideState.stepBoxes, 2);
     assert.equal(guideState.contentsValid, true);
-    assert.equal(guideState.section, "Workflow");
+    assert.equal(guideState.section, "DWE");
     assert.equal(guideState.playground, "/design/workflow/");
     if (name === "mobile") await evaluate("document.querySelector('.mobile-toc summary').click()");
     await evaluate(`document.querySelector('${name === "mobile" ? ".mobile-toc" : ".guide-sidebar"} a').click()`);

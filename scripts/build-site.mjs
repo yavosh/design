@@ -11,7 +11,7 @@ const guides = [
     description: "A practical guide to transactional outbox design, durable stream delivery, retries, and idempotent consumers.",
   },
   {
-    slug: "workflow", folder: "durable-workflow", markdown: "Durable Workflow Engine Playbook.md", section: "Workflow",
+    slug: "workflow", folder: "durable-workflow", markdown: "Durable Workflow Engine Playbook.md", section: "DWE",
     description: "A practical guide to a database-backed durable workflow engine: step runs, outcomes, timers, worker groups, and versioned flow definitions.",
   },
 ];

@@ -22,7 +22,7 @@ This note explains how a service runs a multi-step process durably on a relation
 
 The examples use language-neutral pseudocode and data structures. Adapt transactions, locks, and timers to your platform. Attempt limits, delays, and lease lengths are example settings.
 
-Event delivery is out of scope here. A step emits events through a transactional outbox. The [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/) covers the relay, the stream, and the consumers.
+A step communicates with other services, other systems, and other workflows by emitting events. Event delivery is out of scope here. The [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/) describes one way to deliver them.
 
 Durable
 
@@ -42,24 +42,26 @@ A step's business writes and its emitted events commit in one transaction.
 
 Independent
 
-No broker takes part in step execution. A broker outage delays events and never stops a flow.
+Step execution depends on no delivery mechanism. A delivery outage delays events and never stops a flow.
 
 The engine is entity-agnostic. It stores an entity kind and an opaque entity id, and it never reads the entity itself.
 
 ## Why the engine owns durability
 
-Without an engine, a pipeline exists only as the sum of its message handlers. Each handler publishes the event that starts the next one. The route is written down nowhere. To insert a stage, reorder two stages, or reuse a step, you edit several services.
+In a traditional system, each service coordinates the work itself. One handler holds the business rule, the retry logic, and the knowledge of what runs next. Three concerns share one piece of code.
 
-Each stage also implements its own retry. One stage retries in memory and loses the retry on restart. Another keeps a hand-rolled durable timer. A third polls. "Is this retried, how often, and with what backoff" has a different answer for every stage.
+- **Sequencing.** Each handler publishes the event that starts the next one. The route is written down nowhere. To insert a stage, reorder two stages, or reuse a step, you edit several services.
+- **Retry.** Each stage implements its own. One retries in memory and loses the retry on restart. Another keeps a hand-rolled durable timer. A third polls. "Is this retried, how often, and with what backoff" has a different answer for every stage.
+- **Business logic.** The rule is the small part. The handler must also know its retry policy, its failure path, and which event advances the flow.
 
-A step then carries too much context. It must know its retry policy, its failure path, and which event advances the flow. The business rule is the small part.
-
-That overhead is per step, so teams bundle work to pay it once. For example, fulfilling a record applies the change, applies a correction, and releases the allocation in one operation. A failure in the third action can't retry without re-entering the first two. The audit trail records one step where three things happened.
+That coordination cost is per step, so teams bundle work to pay it once. For example, setting up a workspace creates the workspace, imports the data, and releases the name reservation in one operation. A failure in the third action can't retry without re-entering the first two. The audit trail records one step where three things happened.
 
 Execution order has the same problem. A pipeline needs two properties that are rarely stated:
 
 - **Serial within an instance.** The steps of one instance run strictly one at a time and never overlap.
 - **Parallel across instances.** Many instances progress at once. Throughput comes from here.
+
+An engine separates the concerns. The handler keeps the business rule. The engine takes the retry, the timers, and the sequence.
 
 Principle
 
@@ -70,18 +72,19 @@ A handler is the business rule, a lock, and a completeness check. Retry, timers,
 A step run uses three transactions in one process. The boundary between them is the design. CLAIM and RECORD are the engine's bookkeeping. WORK belongs to the handler.
 
 1. **Claim.** The engine takes a due step row and marks it `RUNNING`. It increments `dispatch_count` and moves the timer forward. The count is now crash-durable.
-2. **Work.** The handler takes its lock and runs a completeness check. If the work is not done, it calls the external system. Then it commits its business writes and outbox events in its own transaction.
+2. **Work.** The handler takes its lock and runs a completeness check. If the work is not done, it calls the external system. Then it commits its business writes and its events in its own transaction.
 3. **Record.** The engine writes the outcome, creates the next step row with its input, appends the audit entry, and updates the instance position.
 
-```text
-Begin a database transaction.
-Select step rows whose status is not COMPLETED or FAILED and whose next_at is before the current time.
-Keep only rows for hosted stages whose instance is ACTIVE.
-Order by next_at and lock the selected rows, skipping rows locked by other transactions.
-Set each row to RUNNING and add one to dispatch_count.
-Set next_at to the current time plus max_duration plus a grace period.
-Commit the transaction.
-Run each handler outside the transaction, up to the concurrency limit.
+```steps
+Claim: one short database transaction
+  Select step rows whose status is not COMPLETED or FAILED and whose next_at is before the current time.
+  Keep only rows for hosted stages whose instance is ACTIVE.
+  Order by next_at and lock the selected rows, skipping rows locked by other transactions.
+  Set each row to RUNNING and add one to dispatch_count.
+  Set next_at to the current time plus max_duration plus a grace period.
+  Commit the transaction.
+Work: outside the transaction
+  Run each handler, up to the concurrency limit.
 ```
 
 - Advancing the timer is part of the claim. Otherwise the row stays due while the handler runs, and every poll picks it up again.
@@ -89,7 +92,7 @@ Run each handler outside the transaction, up to the concurrency limit.
 
 ### Why the handler owns the work transaction
 
-The handler owns locking and serialization. The engine can't wrap that transaction without constraining what it delegated. The outbox joins the handler's open transaction, so events commit with the business change. There is no dual write.
+The handler owns locking and serialization. The engine can't wrap that transaction without constraining what it delegated. Events join the handler's open transaction, so they commit with the business change. There is no dual write.
 
 Don't hold a database transaction open across the external call. Call the external system first, then open the transaction that records the result.
 
@@ -110,15 +113,15 @@ Every step that calls an external system must start with a completeness check. A
 ### A step
 
 ```text
-Step FULFILMENT/RELEASE_ALLOCATION, with at most 10 attempts and a 2-minute maximum duration.
+Step WORKSPACE/RELEASE_NAME, with at most 10 attempts and a 2-minute maximum duration.
 
-Try to take the lock for the allocation's resource. If the lock is busy, return Defer for 30 seconds.
-Read the allocation from the external system. If the allocation is already released, return Done.
-Ask the external system to release the allocation.
+Try to take the lock for the reserved workspace name. If the lock is busy, return Defer for 30 seconds.
+Read the reservation from the external system. If the reservation is already released, return Done.
+Ask the external system to release the reservation.
 If the failure is transient, return Retry for 1 minute.
 If the external system rejects the request, return Failed with the reason.
 Begin a database transaction.
-Record the release and emit the AllocationReleased event through the outbox.
+Record the release and emit the NameReleased event.
 Commit the transaction.
 Return Done.
 ```
@@ -202,7 +205,7 @@ Each instance has one row per step. A second visit to a completed step is struct
 
 One timer dispatcher runs as a background task in each worker process. It polls due rows, claims them, and runs each step in its own process. It publishes nothing.
 
-Nothing is published to move a step, so there are no control messages. The timer row is the durable record and the only mechanism. Business events go through the outbox. The flow itself never travels over the broker.
+Nothing is published to move a step, so there are no control messages. The timer row is the durable record and the only mechanism. Events tell other services, systems, and workflows what happened. They never move the flow itself.
 
 The cost is a pickup latency floor of one poll interval. That is small next to retry delays measured in minutes.
 
@@ -242,7 +245,7 @@ A process registers itself at startup with the stages it can run, then renews a 
 - **Separate expiry from deletion.** A reaper deletes rows expired for longer than a retention window measured in hours. A dead node stays visible while someone diagnoses it. Every node runs the reaper, and the delete is idempotent, so no leader election is needed.
 - **Deregister on shutdown.** A node deletes its own row on a graceful stop, so a rolling deployment doesn't wait out a lease.
 
-A relay-only process registers too, with no stages and a relay flag. The same table then answers "is anything draining the outbox".
+A process that only delivers events registers too, with no stages and a delivery flag. The same table then answers "is anything delivering events".
 
 ```text
 Collect the distinct stages named by every current definition.
@@ -264,20 +267,20 @@ A definition declares the start step, the terminal steps, a default `next` for e
 
 ```json
 {
-  "start": "INTAKE/NORMALISE",
-  "terminals": ["DISPATCH/HAND_OFF"],
+  "start": "SIGNUP/NORMALISE",
+  "terminals": ["WELCOME/SEND"],
   "steps": {
-    "INTAKE/NORMALISE":              { "next": "ENRICHMENT/HYDRATE" },
-    "ENRICHMENT/HYDRATE":            { "next": "VALIDATION/VALIDATE", "alternates": ["SCHEDULE/PARK"] },
-    "SCHEDULE/PARK":                 { "next": "VALIDATION/VALIDATE" },
-    "VALIDATION/VALIDATE":           { "next": "ALLOCATION/ALLOCATE" },
-    "ALLOCATION/ALLOCATE":           { "next": "FULFILMENT/APPLY", "alternates": ["REVIEW/REQUEST"] },
-    "REVIEW/REQUEST":                { "next": "ALLOCATION/ADJUST" },
-    "ALLOCATION/ADJUST":             { "next": "FULFILMENT/APPLY" },
-    "FULFILMENT/APPLY":              { "next": "FULFILMENT/RELEASE_ALLOCATION", "alternates": ["FULFILMENT/APPLY_CORRECTION"] },
-    "FULFILMENT/APPLY_CORRECTION":   { "next": "FULFILMENT/RELEASE_ALLOCATION" },
-    "FULFILMENT/RELEASE_ALLOCATION": { "next": "DISPATCH/HAND_OFF" },
-    "DISPATCH/HAND_OFF":             { "next": null }
+    "SIGNUP/NORMALISE":       { "next": "PROFILE/ENRICH" },
+    "PROFILE/ENRICH":         { "next": "VERIFICATION/VERIFY", "alternates": ["SCHEDULE/PARK"] },
+    "SCHEDULE/PARK":          { "next": "VERIFICATION/VERIFY" },
+    "VERIFICATION/VERIFY":    { "next": "WORKSPACE/RESERVE_NAME" },
+    "WORKSPACE/RESERVE_NAME": { "next": "WORKSPACE/CREATE", "alternates": ["REVIEW/REQUEST"] },
+    "REVIEW/REQUEST":         { "next": "WORKSPACE/ADJUST" },
+    "WORKSPACE/ADJUST":       { "next": "WORKSPACE/CREATE" },
+    "WORKSPACE/CREATE":       { "next": "WORKSPACE/RELEASE_NAME", "alternates": ["WORKSPACE/IMPORT_DATA"] },
+    "WORKSPACE/IMPORT_DATA":  { "next": "WORKSPACE/RELEASE_NAME" },
+    "WORKSPACE/RELEASE_NAME": { "next": "WELCOME/SEND" },
+    "WELCOME/SEND":           { "next": null }
   }
 }
 ```
@@ -334,23 +337,23 @@ Unapproved work stays out of the definition table. A draft has its own lifecycle
 
 ## A flow, step by step
 
-The table follows one record that needs a review. There is one instance, with one active step at a time.
+The table follows one account whose workspace name needs a review. There is one instance, with one active step at a time.
 
 | # | Step | Outcome | Row after |
 | --- | --- | --- | --- |
-| 1 | `INTAKE/NORMALISE` | `Done` | `COMPLETED`. Next row created for `ENRICHMENT/HYDRATE`. |
-| 2 | `ENRICHMENT/HYDRATE` | `Done` with no target, because the record is due now | `COMPLETED`. `VALIDATION/VALIDATE` created. |
-| 3 | `VALIDATION/VALIDATE` | `Done` | `COMPLETED`. `ALLOCATION/ALLOCATE` created. |
-| 4 | `ALLOCATION/ALLOCATE` | The external system queues the request, so `Retry` for 1 minute | `PENDING`, `attempts` is 1, `next_at` is 1 minute ahead. |
-| 5 | `ALLOCATION/ALLOCATE` | Re-driven by the timer and confirmed, so `Done` with target `REVIEW/REQUEST` | `COMPLETED`. The log holds the default and the actual target. |
+| 1 | `SIGNUP/NORMALISE` | `Done` | `COMPLETED`. Next row created for `PROFILE/ENRICH`. |
+| 2 | `PROFILE/ENRICH` | `Done` with no target, because the account starts now | `COMPLETED`. `VERIFICATION/VERIFY` created. |
+| 3 | `VERIFICATION/VERIFY` | `Done` | `COMPLETED`. `WORKSPACE/RESERVE_NAME` created. |
+| 4 | `WORKSPACE/RESERVE_NAME` | The external system queues the request, so `Retry` for 1 minute | `PENDING`, `attempts` is 1, `next_at` is 1 minute ahead. |
+| 5 | `WORKSPACE/RESERVE_NAME` | Re-driven by the timer and confirmed, so `Done` with target `REVIEW/REQUEST` | `COMPLETED`. The log holds the default and the actual target. |
 | 6 | `REVIEW/REQUEST` | The review is not back yet, so `Defer` for 30 seconds | `PENDING`, `defer_count` is 1, `attempts` untouched. |
-| 7 | `REVIEW/REQUEST` | Review applied, so `Done` | `COMPLETED`. `ALLOCATION/ADJUST` created. |
-| 8 | `ALLOCATION/ADJUST` | `Done` | `COMPLETED`. `FULFILMENT/APPLY` created. |
-| 9 | `FULFILMENT/APPLY` | `Done` with target `FULFILMENT/APPLY_CORRECTION` | `COMPLETED`. |
-| 10 | `FULFILMENT/APPLY_CORRECTION` | The process is killed mid-handler | Stays `RUNNING` with the claim's timer. |
-| 11 | `FULFILMENT/APPLY_CORRECTION` | Re-driven when `next_at` falls due. The completeness check finds the correction, so `Done` | `COMPLETED`. `FULFILMENT/RELEASE_ALLOCATION` created. |
-| 12 | `FULFILMENT/RELEASE_ALLOCATION` | `Done` | `COMPLETED`. `DISPATCH/HAND_OFF` created. |
-| 13 | `DISPATCH/HAND_OFF` | `Done` on a declared terminal | `COMPLETED`. The instance is `COMPLETED`. |
+| 7 | `REVIEW/REQUEST` | Review applied, so `Done` | `COMPLETED`. `WORKSPACE/ADJUST` created. |
+| 8 | `WORKSPACE/ADJUST` | `Done` | `COMPLETED`. `WORKSPACE/CREATE` created. |
+| 9 | `WORKSPACE/CREATE` | `Done` with target `WORKSPACE/IMPORT_DATA` | `COMPLETED`. |
+| 10 | `WORKSPACE/IMPORT_DATA` | The process is killed mid-handler | Stays `RUNNING` with the claim's timer. |
+| 11 | `WORKSPACE/IMPORT_DATA` | Re-driven when `next_at` falls due. The completeness check finds the imported data, so `Done` | `COMPLETED`. `WORKSPACE/RELEASE_NAME` created. |
+| 12 | `WORKSPACE/RELEASE_NAME` | `Done` | `COMPLETED`. `WELCOME/SEND` created. |
+| 13 | `WELCOME/SEND` | `Done` on a declared terminal | `COMPLETED`. The instance is `COMPLETED`. |
 
 Two rows are worth reading closely. In row 10, a bundled operation with no durable timer would lose the remaining work. Here the row is still non-terminal, so it re-drives and the completeness check absorbs the repeat. Rows 4 and 5 cost an attempt and rows 6 and 7 don't. That is why `Retry` and `Defer` are different outcomes.
 
@@ -364,7 +367,6 @@ Two rows are worth reading closely. In row 10, a bundled operation with no durab
 | `workflow_state_log` | Append-only audit of step states, transitions, and instance states. |
 | `workflow_definition` | Temporally versioned definitions. Every row is approved and immutable. |
 | `workflow_definition_draft` | Unapproved work in progress. |
-| Outbox | Events awaiting publish. The engine adds an instance id to correlate an event with its flow. See the [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/). |
 
 ### The instance row
 
@@ -407,7 +409,7 @@ The log is append-only. Each entry records the step, the status change, the outc
 
 - The record transaction writes the entry, so the entry can't diverge from the state it describes.
 - An undeclared target without a reason violates a constraint.
-- `actor` records the role: handler, dispatcher, relay, operator, or engine. It doesn't record the node.
+- `actor` records the role: handler, dispatcher, operator, or engine. It doesn't record the node.
 - The log records what the engine observed. A crash between work and record leaves work with no entry. The dispatch number comes from a pre-invocation counter, so a gap in the sequence makes that detectable.
 
 ## What happens when something fails
@@ -424,7 +426,7 @@ The log is append-only. Each entry records the step, the status change, the outc
 | No worker hosts a stage | Rows sit in `PENDING` with a due timer. | Unhosted-stage alert within a lease period. Overdue `next_at`. |
 | A transition fires twice | The database rejects the second active step row. | A constraint violation in the logs. |
 | A step fails | The instance fails and its remaining step row terminates. An operator retry resumes the flow. | Failed-instance alert. |
-| Broker is down | Events wait in the outbox. Steps keep running. | Outbox age. See the [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/). |
+| Event delivery is down | Events wait, already committed with the step's work. Steps keep running. | Age of the oldest undelivered event. |
 | An `ACTIVE` instance stops moving | No step timer catches it. | `last_progress_at` passes the stall threshold. |
 
 ## What to measure
@@ -447,7 +449,7 @@ Emit spans and metrics for step start, outcome, and attempts. Keep stage, step, 
 Alert on overdue steps, on `dispatch_count` climbing without completion, and on `defer_count` climbing. Alert on timeouts by step and on any unhosted stage. Alert on an undeclared transition that skips a stage carrying a control. Never alert on time in `RUNNING`.
 
 - A host terminated for an uncooperative handler must be distinguishable from an ordinary restart. It shows up as a lease that expires without a deregistration.
-- Outbox backlog and age belong to the relay. See the [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/).
+- Backlog and age of undelivered events belong to event delivery. See the [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/).
 - Propagate the W3C `traceparent` from the step's span into the events it emits.
 
 ## Adopting it in your project
@@ -458,7 +460,7 @@ Alert on overdue steps, on `dispatch_count` climbing without completion, and on 
 - A background task per worker process, with an injectable clock.
 - Handlers that honor cancellation.
 - A completeness check for every step that calls an external system.
-- A transactional outbox for the events steps emit.
+- A way to commit events in the handler's transaction and deliver them afterwards, such as a transactional outbox.
 
 ### Build order
 
