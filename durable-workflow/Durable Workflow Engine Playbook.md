@@ -344,7 +344,7 @@ The table follows one account whose workspace name needs a review. There is one 
 | 1 | `SIGNUP/NORMALISE` | `Done` | `COMPLETED`. Next row created for `PROFILE/ENRICH`. |
 | 2 | `PROFILE/ENRICH` | `Done` with no target, because the account starts now | `COMPLETED`. `VERIFICATION/VERIFY` created. |
 | 3 | `VERIFICATION/VERIFY` | `Done` | `COMPLETED`. `WORKSPACE/RESERVE_NAME` created. |
-| 4 | `WORKSPACE/RESERVE_NAME` | The external system queues the request, so `Retry` for 1 minute | `PENDING`, `attempts` is 1, `next_at` is 1 minute ahead. |
+| 4 | `WORKSPACE/RESERVE_NAME` | The external call fails transiently, so `Retry` for 1 minute | `PENDING`, `attempts` is 1, `next_at` is 1 minute ahead. |
 | 5 | `WORKSPACE/RESERVE_NAME` | Re-driven by the timer and confirmed, so `Done` with target `REVIEW/REQUEST` | `COMPLETED`. The log holds the default and the actual target. |
 | 6 | `REVIEW/REQUEST` | The review is not back yet, so `Defer` for 30 seconds | `PENDING`, `defer_count` is 1, `attempts` untouched. |
 | 7 | `REVIEW/REQUEST` | Review applied, so `Done` | `COMPLETED`. `WORKSPACE/ADJUST` created. |

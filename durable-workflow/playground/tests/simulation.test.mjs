@@ -13,7 +13,10 @@ const terminal = item => ["COMPLETED", "FAILED"].includes(item.status);
 
 function checkInvariants(state) {
   assert.equal(new Set(state.rows.map(item => item.step)).size, state.rows.length, "One row per step per instance");
-  for (const item of state.rows) assert.equal(item.nextAt === null, terminal(item), "Non-terminal implies a timer");
+  for (const item of state.rows) {
+    assert.equal(item.nextAt === null, terminal(item), "Non-terminal implies a timer");
+    assert.ok(item.dispatchCount >= item.attempts + item.deferCount, "Counted outcomes need a dispatch");
+  }
   assert.ok(state.rows.filter(item => !terminal(item)).length <= 1, "One active step per instance");
   state.log.forEach((entry, index) => {
     assert.equal(entry.seq, index + 1);
@@ -163,6 +166,16 @@ test("a killed process re-drives from the claim's timer with no second external 
 });
 
 test("an exhausted retry budget fails the instance until an operator retries the step", () => {
+  const initial = createSimulation("exhausted");
+  assert.equal(row(initial).dispatchCount, 9);
+  assert.equal(row(initial).lastOutcome, "Retry");
+  assert.equal(row(initial).lastError, "External system unavailable");
+  assert.equal(row(initial).nextAt, initial.time);
+  const retries = initial.log.filter(entry => entry.step === initial.instance.currentStep);
+  assert.equal(retries.length, 9);
+  assert.deepEqual(retries.map(entry => [entry.attempt, entry.dispatch]), Array.from({ length: 9 }, (_, index) => [index + 1, index + 1]));
+  assert.ok(retries.every(entry => entry.outcome === "Retry" && entry.at <= initial.time));
+  assert.ok(initial.workers.every(worker => worker.leaseExpiresAt > initial.time));
   const failed = run("exhausted", 3);
   assert.deepEqual(row(failed), { ...row(failed), status: "FAILED", attempts: 10, nextAt: null });
   assert.equal(failed.instance.status, "FAILED");
@@ -175,6 +188,47 @@ test("an exhausted retry budget fails the instance until an operator retries the
   const state = run("exhausted");
   assert.equal(row(state, "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
   assert.equal(state.instance.status, "ACTIVE");
+});
+
+test("a handler-returned Failed stops the instance without charging an attempt", () => {
+  const initial = createSimulation("failed");
+  const worked = run("failed", 2);
+  assert.deepEqual(worked.handler.outcome, { type: "Failed", reason: "The account could not be verified." });
+  assert.equal(worked.external.calls[initial.instance.currentStep], 1);
+  assert.equal(worked.external.effects[initial.instance.currentStep], undefined);
+  assert.deepEqual(worked.business, initial.business);
+  assert.deepEqual(worked.events, initial.events);
+  const recorded = advance(worked);
+  assert.equal(row(recorded).status, "FAILED");
+  assert.equal(row(recorded).nextAt, null);
+  assert.equal(row(recorded).attempts, 0);
+  assert.equal(row(recorded).deferCount, 0);
+  assert.equal(row(recorded).lastOutcome, "Failed");
+  assert.equal(recorded.instance.status, "FAILED");
+  assert.equal(recorded.instance.failureReason, worked.handler.outcome.reason);
+  assert.equal(recorded.rows.length, initial.rows.length);
+  assert.equal(recorded.log.at(-1).outcome, "Failed");
+  assert.equal(recorded.log.at(-1).reason, worked.handler.outcome.reason);
+  assert.equal(recorded.log.at(-1).target, null);
+});
+
+test("record rejects an unknown handler outcome instead of completing the step", () => {
+  const worked = run("normal", 2);
+  worked.handler.outcome = { type: "Unknown" };
+  assert.throws(() => advance(worked), /Unknown outcome/);
+  assert.equal(row(worked).status, "RUNNING");
+});
+
+test("a re-drive completes a missing local commit without repeating the external effect", () => {
+  const reclaimed = run("crash", 4);
+  const step = reclaimed.instance.currentStep;
+  reclaimed.business = reclaimed.business.filter(item => item !== step);
+  reclaimed.events = reclaimed.events.filter(event => event.type !== "DataImported");
+  const worked = advance(reclaimed);
+  assert.equal(worked.external.calls[step], 1);
+  assert.equal(worked.external.effects[step], 1);
+  assert.equal(worked.business.filter(item => item === step).length, 1);
+  assert.equal(worked.events.filter(event => event.type === "DataImported").length, 1);
 });
 
 test("a handler that ignores cancellation times out and its host terminates", () => {
@@ -201,7 +255,12 @@ test("a handler that ignores cancellation times out and its host terminates", ()
 });
 
 test("an unhosted stage stalls with no error until a worker registers for it", () => {
+  const initial = createSimulation("unhosted");
+  assert.deepEqual(initial.unhosted, []);
+  assert.notEqual(initial.workers[0].stages, scenarios.unhosted.workers);
+  assert.notEqual(initial.workers[0].stages, initial.workers[1].stages);
   const stalled = run("unhosted", 2);
+  assert.deepEqual(stalled.unhosted, []);
   assert.deepEqual(row(stalled), { ...row(stalled), step: "REVIEW/REQUEST", status: "PENDING", dispatchCount: 0 });
   assert.ok(row(stalled).nextAt < stalled.time, "The row is overdue");
   const reported = advance(stalled);

@@ -7,7 +7,7 @@ import { resolve, join, extname, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { scenarios } from "../src/simulation.js";
 
-// Run in CI with an isolated Chrome profile. No browser automation dependency is required.
+// Run in CI with an isolated browser profile. No browser automation dependency is required.
 async function checkPage(scenarios) {
   const errors = [];
   window.addEventListener("error", event => errors.push(event.message));
@@ -36,23 +36,44 @@ async function checkPage(scenarios) {
     await pause();
     return value;
   }
+  function checkLayout(label) {
+    check(document.documentElement.scrollWidth <= innerWidth, `Horizontal overflow: ${label}`);
+    if (innerWidth < 1000 || innerHeight < 600) return;
+    check(document.documentElement.scrollHeight <= innerHeight + 1, `Vertical overflow: ${label}`);
+    for (const selector of [".masthead", ".intro", ".scenario-bar", ".instance", ".pipeline", ".controls", ".explanation", ".timeline", ".page-footer"]) {
+      const element = document.querySelector(selector);
+      const rect = element.getBoundingClientRect();
+      check(rect.top >= 0 && rect.bottom <= innerHeight + 1 && rect.height > 0, `Outside viewport: ${selector}, ${label}`);
+    }
+    for (const element of document.querySelectorAll(".pipeline > .node")) {
+      check(element.scrollHeight <= element.clientHeight + 1 && element.scrollWidth <= element.clientWidth + 1, `Clipped component: ${element.className}, ${label}`);
+    }
+    const chips = document.querySelector(".chips").getBoundingClientRect();
+    const current = document.querySelector(".chip-current").getBoundingClientRect();
+    check(current.left >= chips.left - 1 && current.right <= chips.right + 1, `Current step is hidden: ${label}`);
+    check(document.querySelector(".explanation").clientHeight >= 100, `Explanation too short: ${label}`);
+    check(document.querySelector(".timeline").clientHeight >= 100, `Timeline too short: ${label}`);
+  }
   const result = { passed: false, scenarios: [], viewport: { width: innerWidth, height: innerHeight, density: devicePixelRatio } };
   try {
     await waitFor(() => document.querySelector(".primary-button"), "Application did not render");
     check(document.querySelector("h1").textContent === "Workflow step flow", "Wrong title");
-    check(document.querySelectorAll("#scenario option").length === 10, "Missing scenarios");
+    check(document.querySelectorAll("#scenario option").length === Object.keys(scenarios).length, "Missing scenarios");
     document.querySelector(".failure-button").click();
     await pause();
     check(document.querySelector(".scenario-dialog").open, "Failure scenarios did not open");
-    check(document.querySelectorAll(".scenario-options button").length === 6, "Missing failure scenarios");
+    check(document.querySelectorAll(".scenario-options button").length === Object.values(scenarios).filter(scenario => scenario.failure).length, "Missing failure scenarios");
     document.querySelector('[aria-label="Close scenarios"]').click();
     for (const [key, scenario] of Object.entries(scenarios)) {
       await select(key);
-      check(document.documentElement.scrollWidth <= innerWidth, `Horizontal overflow: ${key}, start`);
+      checkLayout(`${key}, start`);
+      const controlsTop = document.querySelector(".controls").getBoundingClientRect().top;
       for (let i = 0; i < scenario.steps.length; i += 1) {
         document.querySelector(".primary-button").click();
         await pause();
-        check(document.documentElement.scrollWidth <= innerWidth, `Horizontal overflow: ${key}, step ${i + 1}`);
+        checkLayout(`${key}, step ${i + 1}`);
+        if (innerWidth >= 1000 && innerHeight >= 600) check(Math.abs(document.querySelector(".controls").getBoundingClientRect().top - controlsTop) < 1, `Controls moved: ${key}, step ${i + 1}`);
+        if (key === "crash" && i === 2) check(document.querySelector(".status-due"), "Due RUNNING row has no DUE badge");
       }
       check(document.querySelector(".primary-button").disabled, `Scenario did not finish: ${key}`);
       const { instance, auditLog } = await inspect(".instance");
@@ -79,13 +100,23 @@ async function checkPage(scenarios) {
         check(row("WORKSPACE/RELEASE_NAME").status === "COMPLETED" && instance.status === "ACTIVE", "Operator retry did not resume the flow");
         check(auditLog.some(entry => entry.actor === "operator"), "Operator retry is not in the audit log");
       }
+      if (key === "failed") {
+        check(instance.status === "FAILED" && row("VERIFICATION/VERIFY").status === "FAILED", "Handler failure did not stop the flow");
+        check(row("VERIFICATION/VERIFY").attempts === 0 && row("VERIFICATION/VERIFY").nextAt === null, "Handler failure charged an attempt or left a timer");
+      }
       if (key === "timeout") check(!dispatcher.workers[0].alive && row("WORKSPACE/RELEASE_NAME").lastError === "timeout", "Timeout was not recorded");
       if (key === "unhosted") check(dispatcher.workers.length === 3 && dispatcher.unhostedStages.length === 0, "Stage is still unhosted");
       if (scenario.steps.length > 3) {
         document.querySelector(".timeline .text-button").click();
         await pause();
         check(document.querySelectorAll(".timeline li").length === scenario.steps.length, "Timeline expansion failed");
-        check(document.documentElement.scrollWidth <= innerWidth, `Horizontal overflow: ${key}, timeline`);
+        checkLayout(`${key}, timeline`);
+        const timeline = document.querySelector(".timeline");
+        if (innerWidth >= 1000 && innerHeight >= 600) {
+          timeline.scrollTop = timeline.scrollHeight;
+          const last = timeline.querySelector("li:last-child").getBoundingClientRect();
+          check(last.bottom <= timeline.getBoundingClientRect().bottom + 1, "Latest timeline entry is unreachable");
+        }
       }
       result.scenarios.push(key);
     }
@@ -185,15 +216,19 @@ function send(method, params = {}, sessionId) {
 }
 async function waitForHeading(title, sessionId) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const result = await send("Runtime.evaluate", {
-      expression: `document.readyState === 'complete' && document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`, returnByValue: true,
-    }, sessionId);
-    if (result.result.value) return;
+    try {
+      const result = await send("Runtime.evaluate", {
+        expression: `document.readyState === 'complete' && document.querySelector('h1')?.textContent === ${JSON.stringify(title)}`, returnByValue: true,
+      }, sessionId);
+      if (result.result.value) return;
+    } catch (error) {
+      if (!/Cannot find context|Execution context was destroyed|Inspected target navigated/.test(error.message)) throw error;
+    }
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   throw new Error(`Page did not render: ${title}`);
 }
-const timeout = setTimeout(() => { chrome.kill(); throw new Error("Browser verification timed out"); }, 120000);
+const timeout = setTimeout(() => { chrome.kill(); throw new Error("Browser verification timed out"); }, 180000);
 try {
   const { targetId } = await send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
@@ -205,7 +240,7 @@ try {
     }, sessionId);
     writeFileSync(resolve(`qa/${file}.png`), Buffer.from(image.data, "base64"));
   }
-  for (const [name, width, height] of [["desktop", 1487, 1058], ["mobile", 390, 844]]) {
+  for (const [name, width, height] of [["desktop", 1487, 1058], ["laptop", 1366, 768], ["compact", 1024, 640], ["mobile", 390, 844]]) {
     consoleErrors.length = 0;
     await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: name === "mobile" }, sessionId);
     await send("Page.navigate", { url: pathToFileURL(page).href }, sessionId);
@@ -226,7 +261,7 @@ try {
     assert.equal(result.viewport.width, width);
     assert.equal(result.viewport.height, height);
     assert.deepEqual(consoleErrors, []);
-    console.log(`${name}: all ten scenarios and core controls passed; viewport ${width} × ${height}`);
+    console.log(`${name}: all ${Object.keys(scenarios).length} scenarios and core controls passed; viewport ${width} × ${height}`);
 
     await send("Page.navigate", { url: indexUrl }, sessionId);
     await waitForHeading("Design guides", sessionId);

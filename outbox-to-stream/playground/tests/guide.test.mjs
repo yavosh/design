@@ -43,6 +43,15 @@ test("a steps block renders titled boxes with numbered steps instead of a code b
   assert.throws(() => renderGuide("# Guide\n\n```steps\n  No box yet.\n```\n"), /box title/);
 });
 
+test("steps blocks accept whitespace indentation and omit empty lists", () => {
+  const { html } = renderGuide("# Guide\n\n```steps\nFirst box\n One.\n\tTwo.\n    Three.\nEmpty box\n```\n");
+  assert.ok(html.includes('<p class="steps-title">First box</p><ol><li>One.</li><li>Two.</li><li>Three.</li></ol>'));
+  assert.ok(html.includes('<p class="steps-title">Empty box</p></li>'));
+  assert.ok(!html.includes("<ol></ol>"));
+  assert.throws(() => renderGuide("# Guide\n\n```steps\n\tNo box yet.\n```\n"), /box title/);
+  assert.ok(!renderGuide("# Guide\n\n```steps\n```\n").html.includes('<ol class="steps">'));
+});
+
 test("repeated headings receive unique, matching contents targets", () => {
   const { html, toc } = renderGuide("# Guide\n\n## Same heading\n\nFirst.\n\n## Same heading\n\nSecond.\n");
   assert.ok(html.includes('id="same-heading"'));

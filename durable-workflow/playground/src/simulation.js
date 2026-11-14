@@ -71,6 +71,12 @@ export const scenarios = {
     failure: true, start: "WORKSPACE/RELEASE_NAME", path: created,
     steps: ["claim", "workRetry", "record", "timerDue", "claim", "work", "record"],
   },
+  failed: {
+    name: "The request is rejected",
+    description: "Stop the flow when the handler returns Failed with a reason.",
+    failure: true, start: "VERIFICATION/VERIFY", path: ["SIGNUP/NORMALISE", "PROFILE/ENRICH"],
+    steps: ["claim", "workFailed", "record"],
+  },
   defer: {
     name: "The lock is busy",
     description: "Wait for another instance to release a shared lock, without using the retry budget.",
@@ -99,7 +105,7 @@ export const scenarios = {
   exhausted: {
     name: "Retry budget runs out",
     description: "Fail the step and its instance, then resume the flow with an operator retry.",
-    failure: true, start: "WORKSPACE/RELEASE_NAME", path: created, seed: { attempts: 9 },
+    failure: true, start: "WORKSPACE/RELEASE_NAME", path: created, previousRetries: 9,
     intro: "Nine of its ten attempts have already failed.",
     steps: ["claim", "workRetry", "record", "pollMiss", "operatorRetry", "claim", "work", "record"],
   },
@@ -172,10 +178,13 @@ export function createSimulation(scenario = "normal") {
     const target = config.path[index + 1] ?? config.start;
     run(state, target === definition.steps[step].next ? {} : { target, reason: reasons[target] });
   });
-  Object.assign(currentRow(state), config.seed);
-  if (config.workers) state.workers.forEach(worker => { worker.stages = config.workers; });
+  for (let attempt = 0; attempt < (config.previousRetries ?? 0); attempt += 1) {
+    run(state, { fail: "transient" });
+    timerDue(state);
+  }
+  for (const worker of state.workers) worker.leaseExpiresAt = state.time + LEASE;
+  if (config.workers) state.workers.forEach(worker => { worker.stages = [...config.workers]; });
   if (config.lock) state.lock = { key: LOCK, holder: config.lock };
-  state.unhosted = unhostedStages(state);
   state.external.lastResult = null;
   state.handler = { phase: "Idle", worker: null, outcome: null };
   state.dispatcher = "Polling for due rows";
@@ -252,10 +261,24 @@ function work(state, { fail, target, reason } = {}) {
       message: "External call failed transiently. Outcome: Retry in 1 minute.",
     };
   }
+  if (fail === "rejected") {
+    const reason = "The account could not be verified.";
+    state.external.calls[row.step] = (state.external.calls[row.step] ?? 0) + 1;
+    state.external.lastResult = "rejected";
+    state.handler = { ...state.handler, phase: "Returned Failed", outcome: { type: "Failed", reason } };
+    return {
+      active: "handler", kind: "warning",
+      title: "The external system rejects the request. The handler returns Failed.",
+      explanation: `${reason} The handler commits no business write or event. It returns Failed with the rejection reason.`,
+      summary: "The external system rejected the request, so the handler returned Failed.",
+      lesson: "Failed stops the flow immediately. It does not consume the retry budget.",
+      message: `Outcome: Failed. ${reason}`,
+    };
+  }
   const found = Boolean(state.external.effects[row.step]);
   if (!found) {
     state.external.calls[row.step] = (state.external.calls[row.step] ?? 0) + 1;
-    state.external.effects[row.step] = 1;
+    state.external.effects[row.step] = (state.external.effects[row.step] ?? 0) + 1;
   }
   state.external.lastResult = found ? "already done" : "ok";
   if (!state.business.includes(row.step)) {
@@ -310,6 +333,7 @@ function record(state) {
   const row = currentRow(state);
   const outcome = state.handler.outcome;
   if (row.status !== "RUNNING" || !outcome) throw new Error("Record needs an outcome");
+  if (!["Done", "Retry", "Defer", "Park", "Failed"].includes(outcome.type)) throw new Error(`Unknown outcome: ${outcome.type}`);
   state.handler = { phase: "Idle", worker: null, outcome: null };
   state.dispatcher = "Polling for due rows";
   row.lastOutcome = outcome.type;
@@ -342,7 +366,7 @@ function record(state) {
     row.nextAt = state.time + outcome.delay;
     append(state, row, { from: "RUNNING", to: "PENDING", outcome: "Defer", actor: "handler" });
     return {
-      active: "row",
+      active: "row", kind: "warning",
       title: "Record: a deferral, with no attempt charged",
       explanation: `The row returns to PENDING. defer_count is ${row.deferCount}, attempts stays ${row.attempts}, and next_at is virtual ${formatTime(row.nextAt)}.`,
       summary: `The engine raised defer_count to ${row.deferCount}, charged no attempt, and set next_at to virtual ${formatTime(row.nextAt)}.`,
@@ -363,6 +387,23 @@ function record(state) {
       shortTitle: "Park. The row waits for a known time.",
       lesson: "A flow that parks across a deployment finishes on the definition version it started on.",
       message: `Park recorded. next_at ${formatTime(row.nextAt)}; counters unchanged.`,
+    };
+  }
+  if (outcome.type === "Failed") {
+    row.status = "FAILED";
+    row.nextAt = null;
+    row.lastError = outcome.reason;
+    state.instance.status = "FAILED";
+    state.instance.failureReason = outcome.reason;
+    append(state, row, { from: "RUNNING", to: "FAILED", outcome: "Failed", actor: "handler", reason: outcome.reason });
+    return {
+      active: "row", kind: "warning",
+      title: "Record: Failed stops the flow",
+      explanation: `The engine marks the step and its instance FAILED in one transaction. It clears next_at and records the reason: ${outcome.reason} No counter changes and no next row is created.`,
+      summary: "The engine failed the step and its instance without charging an attempt.",
+      shortTitle: "Failed. The flow stops.",
+      lesson: "A handler-returned Failed is a final decision. An operator must intervene before the step can run again.",
+      message: `${row.step} FAILED. Instance ${state.instance.id} FAILED. ${outcome.reason}`,
     };
   }
   const step = definition.steps[row.step];
@@ -624,6 +665,7 @@ const actions = {
   claim, record, timerDue, crash, pollMiss, operatorRetry, cancel, abandon, hostTerminates, coverage, workerJoins,
   work: state => work(state),
   workRetry: state => work(state, { fail: "transient" }),
+  workFailed: state => work(state, { fail: "rejected" }),
   workPark: state => work(state, { fail: "park" }),
   workAlternate: state => work(state, alternate(state)),
   workOverride: state => work(state, { target: "WORKSPACE/CREATE", reason: "The review confirmed the name, so the handler skipped WORKSPACE/ADJUST." }),
@@ -642,7 +684,7 @@ export function advance(previous) {
   const stepKey = state.instance.currentStep;
   const text = actions[action](state);
   for (const worker of state.workers) if (worker.alive) worker.leaseExpiresAt = state.time + LEASE;
-  state.unhosted = unhostedStages(state);
+  if (state.unhosted.length) state.unhosted = unhostedStages(state);
   state.active = text.active;
   state.title = text.title;
   state.explanation = text.explanation;

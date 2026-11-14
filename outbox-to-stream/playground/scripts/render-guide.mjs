@@ -27,15 +27,16 @@ export function renderGuide(markdown) {
   };
   renderer.code = function (token) {
     if (token.lang !== "steps") return Renderer.prototype.code.call(this, token);
-    // An unindented line titles a box; each two-space-indented line is one numbered step in it.
+    // An unindented line titles a box; each indented line is one numbered step in it.
     const boxes = [];
     for (const line of token.text.split("\n")) {
       if (!line.trim()) continue;
-      if (!line.startsWith("  ")) boxes.push({ title: line.trim(), steps: [] });
+      if (!/^\s/.test(line)) boxes.push({ title: line.trim(), steps: [] });
       else if (boxes.length) boxes.at(-1).steps.push(line.trim());
       else throw new Error("A steps block must start with a box title.");
     }
-    const items = boxes.map(({ title, steps }) => `<li><p class="steps-title">${escapeHtml(title)}</p><ol>${steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></li>`);
+    if (!boxes.length) return "";
+    const items = boxes.map(({ title, steps }) => `<li><p class="steps-title">${escapeHtml(title)}</p>${steps.length ? `<ol>${steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}</li>`);
     return `<ol class="steps">${items.join("\n")}</ol>\n`;
   };
   renderer.paragraph = function (token) {
