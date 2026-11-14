@@ -18,6 +18,19 @@ test("the playbook renders its sections, tables, code, and callouts", () => {
   assert.ok(!html.includes('href="#why"'), "The old contents links must not survive conversion");
 });
 
+test("the workflow playbook renders its sections, tables, code, and callouts", () => {
+  const markdown = readFileSync(new URL("../../../durable-workflow/Durable Workflow Engine Playbook.md", import.meta.url), "utf8");
+  const { html, toc, title } = renderGuide(markdown);
+  assert.equal(title, "Durable Workflow Engine Playbook");
+  assert.equal((html.match(/<h1 /g) ?? []).length, 1);
+  assert.equal((html.match(/<h2 /g) ?? []).length, (markdown.match(/^## /gm) ?? []).length);
+  assert.ok(html.includes('<div class="table-scroll"'));
+  assert.ok(html.includes('<code class="language-json">'));
+  assert.ok(html.includes('class="callout-label warning">Trap'));
+  const ids = new Set([...html.matchAll(/ id="([^"]+)"/g)].map(match => match[1]));
+  for (const [, id] of toc.matchAll(/href="#([^"]+)"/g)) assert.ok(ids.has(id), `Missing target: ${id}`);
+});
+
 test("repeated headings receive unique, matching contents targets", () => {
   const { html, toc } = renderGuide("# Guide\n\n## Same heading\n\nFirst.\n\n## Same heading\n\nSecond.\n");
   assert.ok(html.includes('id="same-heading"'));

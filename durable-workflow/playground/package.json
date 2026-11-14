@@ -1,0 +1,19 @@
+{
+  "name": "workflow-playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/build-standalone.mjs",
+    "preview": "vite preview",
+    "test": "node --test tests/simulation.test.mjs",
+    "test:browser": "node scripts/check-browser.mjs"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "5.0.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "vite": "6.4.2"
+  }
+}
