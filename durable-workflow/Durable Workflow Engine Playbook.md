@@ -22,7 +22,7 @@ This note explains how a service runs a multi-step process durably on a relation
 
 The examples use language-neutral pseudocode and data structures. Adapt transactions, locks, and timers to your platform. Attempt limits, delays, and lease lengths are example settings.
 
-A step communicates with other services, other systems, and other workflows by emitting events. Event delivery is out of scope here. The [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/) describes one way to deliver them.
+A step communicates with other services, other systems, and other workflows by emitting events.
 
 Durable
 
