@@ -265,7 +265,8 @@ dialog::backdrop { background: #10172866; backdrop-filter: blur(3px); }
 }
 @media (max-width: 999px), (max-height: 599px) {
   .playground { display: flex; flex-direction: column; }
-  .controls { position: fixed; bottom: 0; left: 20px; right: 20px; z-index: 2; background: #fcfaf7; border-top: 1px solid #bfc0c1; padding: 10px 0; margin: 0; }
+  .controls { position: fixed; flex-wrap: wrap; bottom: 0; left: 20px; right: 20px; z-index: 2; background: #fcfaf7; border-top: 1px solid #bfc0c1; padding: 10px 0; margin: 0; }
+  .failure-button { margin-left: auto; }
   .page-footer { padding-bottom: 140px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

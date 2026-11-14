@@ -46,8 +46,13 @@ export function App() {
   useEffect(() => { explanation.current.scrollTop = 0; }, [state.step, state.scenario]);
 
   useEffect(() => {
-    const current = chips.current.querySelector(".chip-current");
-    chips.current.scrollLeft = current.offsetLeft - chips.current.offsetLeft;
+    function scrollCurrent() {
+      const current = chips.current.querySelector(".chip-current");
+      chips.current.scrollLeft = current.offsetLeft - chips.current.offsetLeft;
+    }
+    scrollCurrent();
+    window.addEventListener("resize", scrollCurrent);
+    return () => window.removeEventListener("resize", scrollCurrent);
   }, [state.step, state.scenario]);
 
   function selectScenario(key) {

@@ -309,6 +309,46 @@ try {
     assert.deepEqual(consoleErrors, []);
     console.log(`${name}: HTML guide, contents anchors, tables, code blocks, and playground navigation passed`);
   }
+  await send("Page.navigate", { url: indexUrl + "workflow/" }, sessionId);
+  await waitForHeading("Workflow step flow", sessionId);
+  for (const [width, height] of [[601, 844], [1024, 500]]) {
+    await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const controls = await evaluate(`({
+      overflow: document.documentElement.scrollWidth > innerWidth,
+      visible: [...document.querySelectorAll('.controls button')].every(button => {
+        const rect = button.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
+      })
+    })`);
+    assert.equal(controls.overflow, false, `${width} × ${height}: horizontal overflow`);
+    assert.equal(controls.visible, true, `${width} × ${height}: controls outside viewport`);
+  }
+  await send("Emulation.setDeviceMetricsOverride", { width: 1800, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+  await send("Runtime.evaluate", {
+    expression: `(async () => {
+      const pause = () => new Promise(resolve => setTimeout(resolve, 50));
+      const select = document.querySelector('#scenario');
+      select.value = 'flow';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await pause();
+      for (let step = 0; step < ${scenarios.flow.steps.length}; step += 1) {
+        document.querySelector('.primary-button').click();
+        await pause();
+      }
+    })()`, awaitPromise: true,
+  }, sessionId);
+  assert.equal(await evaluate("document.querySelector('.primary-button').disabled"), true);
+  await send("Emulation.setDeviceMetricsOverride", { width: 1024, height: 640, deviceScaleFactor: 1, mobile: false }, sessionId);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const currentVisible = await evaluate(`(() => {
+    const strip = document.querySelector('.chips').getBoundingClientRect();
+    const chip = document.querySelector('.chip-current').getBoundingClientRect();
+    return chip.left >= strip.left - 1 && chip.right <= strip.right + 1;
+  })()`);
+  assert.equal(currentVisible, true, "Current step hidden after resizing a completed flow");
+  assert.deepEqual(consoleErrors, []);
+  console.log("Window resize: narrow and short controls and the completed flow's current step remain visible");
 } finally {
   clearTimeout(timeout);
   chrome.kill();
