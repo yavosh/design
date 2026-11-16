@@ -81,7 +81,7 @@ Claim: one short database transaction
   Keep only rows for hosted stages whose instance is ACTIVE.
   Order by next_at and lock the selected rows, skipping rows locked by other transactions.
   Set each row to RUNNING and add one to dispatch_count.
-  Set next_at to the current time plus max_duration plus a grace period.
+  Set next_at to the current time plus max_duration plus a recovery margin.
   Commit the transaction.
 Work: outside the transaction
   Run each activity, up to the concurrency limit.
@@ -112,7 +112,7 @@ Every step that calls an external system must start with a completeness check. A
 
 ### An activity
 
-`WORKSPACE/RELEASE_NAME` · **Attempt limit:** 10 · **Maximum duration:** 2 minutes.
+`WORKSPACE/RELEASE_NAME` · **Retry budget:** 10 charged failures · **Maximum duration:** 2 minutes.
 
 ```steps
 Acquire the lock
@@ -139,13 +139,15 @@ The activity holds no retry loop, no next event to publish, and no compensation 
 | Outcome | Status after | Counters | `next_at` |
 | --- | --- | --- | --- |
 | `Done` | `COMPLETED` | Unchanged | Cleared |
-| `Retry` | `PENDING` | `attempts` plus one | Now plus backoff |
+| `Retry`, with budget remaining after increment | `PENDING` | `attempts` plus one | Now plus backoff |
 | `Defer` | `PENDING` | `defer_count` plus one | Now plus delay |
 | `Park` | `PARKED` | Unchanged | An absolute time |
-| `Failed`, or attempts above `max_attempts` | `FAILED` | Unchanged | Cleared |
+| `Retry`, with `attempts >= max_attempts` after increment | `FAILED` | `attempts` plus one | Cleared |
+| `Failed` | `FAILED` | Unchanged | Cleared |
 
 - `Done` can name a target other than the default next step. That target always carries a reason.
-- `Retry` consumes the retry budget. Use it for a failure.
+- `Retry` increments `attempts`, then fails the step if `attempts >= max_attempts`. Use it for a failure.
+- The budget counts charged failures, including timeouts, rather than total invocations.
 - `Defer` and `Park` mean "come back later without charging an attempt". Use `Defer` for contention or a dependency that isn't ready. Use `Park` for a planned wait until a known time.
 - `Failed` has no target. A failed step stops the flow.
 
@@ -182,7 +184,7 @@ The payload is forward-flowing input and not a result cache. Steps also receive 
 
 Every step declares a maximum duration with its retry policy. The engine stamps both onto the row when it creates the row. Changing a policy then doesn't change the limits for work in flight.
 
-The claim's fallback timer derives from the declared duration: `next_at` is now plus `max_duration` plus a grace period. The engine re-dispatches a step only if the step overran or its process died.
+The claim's fallback timer derives from the declared duration: `next_at` is now plus `max_duration` plus a recovery margin. The timer allows another worker to recover work after an overrun or process failure.
 
 Don't copy
 
@@ -191,9 +193,11 @@ A fixed fallback timer re-dispatches a healthy slow step while it's still workin
 When a step exceeds its duration, the engine stops the activity in two stages:
 
 1. **Cancel.** The engine signals cancellation at `max_duration`. A well-behaved activity abandons its external call and returns.
-2. **Abandon.** If the activity hasn't returned after a short grace period, the engine stops waiting and records a timeout.
+2. **Abandon.** If the activity hasn't returned within the cancellation grace after cancellation, the engine stops waiting and records a timeout.
 
 Most runtimes can't kill a running task. An activity that ignores cancellation keeps its lock and can still commit after the engine recorded a timeout. So the escalation ends in a deliberate choice: the host process terminates. The connection drops, the database releases the lock, and the step re-drives on another node. An activity that ignores cancellation is a defect, and failing fast is the proportionate response.
+
+Set the recovery margin longer than the cancellation grace plus expected host termination and lock-release time. Allow for clock skew. This reduces premature re-dispatch; it does not establish exclusive ownership. The activity's lock still governs concurrent business work.
 
 A timeout consumes an attempt and behaves like a thrown error. `last_error` distinguishes a timeout from an activity-returned `Failed`.
 
@@ -209,7 +213,7 @@ Each instance has one row per step. A second visit to a completed step is struct
 
 ## Dispatch: the step row is the queue
 
-One timer dispatcher runs as a background task in each worker process. It polls due rows, claims them, and runs each step in its own process. It publishes nothing.
+One timer dispatcher runs as a background task in each worker process. It polls due rows, claims them, and invokes activities within the worker process. It publishes nothing.
 
 Nothing is published to move a step, so there are no control messages. The timer row is the durable record and the only mechanism. Events tell other services, systems, and workflows what happened. They never move the flow itself.
 
