@@ -1,6 +1,6 @@
 # Workflow Playground
 
-Follow one account through onboarding in a durable workflow engine: a step row, a dispatcher, a handler, and an external system.
+Follow one account through onboarding in a durable workflow engine: a step row, a dispatcher, an activity, and an external system.
 Use **Next step** or **Play** to advance. Select any component to inspect its simulated state.
 
 [Open the public playground](https://yavosh.github.io/design/workflow/) or browse the [design guides](https://yavosh.github.io/design/).
@@ -15,13 +15,13 @@ The playground includes eleven scenarios:
 - One step run: claim, work, and record.
 - A full flow, step by step.
 - External system failure and retry backoff.
-- A handler rejection that fails the step and its instance.
+- An activity rejection that fails the step and its instance.
 - A busy lock and a deferral.
 - A planned wait with a park.
 - A declared branch and an undeclared override.
-- A process that dies mid-handler.
+- A process that dies mid-activity.
 - An exhausted retry budget and an operator retry.
-- A handler that ignores cancellation.
+- An activity that ignores cancellation.
 - A stage that no worker hosts.
 
 ## Run locally
@@ -65,7 +65,7 @@ The simulation uses deterministic, in-memory steps and a virtual clock.
 It illustrates the design; it does not test a real database, real locks, or concurrency.
 Reloading clears the simulation.
 
-Every step uses the same handler shape: lock, completeness check, external call, then one local commit.
+Every step uses the same activity shape: lock, completeness check, external call, then one local commit.
 Each scenario starts with its earlier steps already completed.
 The retry-budget scenario also runs nine failed attempts before its first visible step.
 Step names, delays, and limits are example settings.

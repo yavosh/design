@@ -79,11 +79,11 @@ async function checkPage(scenarios) {
       const { instance, auditLog } = await inspect(".instance");
       const rows = await inspect(".step-row");
       const dispatcher = await inspect(".dispatcher");
-      const handler = await inspect(".handler");
+      const activity = await inspect(".activity");
       const external = await inspect(".external");
       const row = step => rows.find(item => item.step === step);
       check(rows.filter(item => !["COMPLETED", "FAILED"].includes(item.status)).length <= 1, `Two active steps: ${key}`);
-      check(handler.outcome === null && handler.lock === null, `Handler did not finish: ${key}`);
+      check(activity.outcome === null && activity.lock === null, `Activity did not finish: ${key}`);
       check(Object.values(external.effects).every(count => count === 1), `An effect repeated: ${key}`);
       if (key === "normal" || key === "flow") check(instance.status === "COMPLETED", `Instance did not complete: ${key}`);
       if (key === "flow") check(rows.length === 10 && row("REVIEW/REQUEST").deferCount === 1, "Flow did not follow the playbook table");
@@ -101,8 +101,8 @@ async function checkPage(scenarios) {
         check(auditLog.some(entry => entry.actor === "operator"), "Operator retry is not in the audit log");
       }
       if (key === "failed") {
-        check(instance.status === "FAILED" && row("VERIFICATION/VERIFY").status === "FAILED", "Handler failure did not stop the flow");
-        check(row("VERIFICATION/VERIFY").attempts === 0 && row("VERIFICATION/VERIFY").nextAt === null, "Handler failure charged an attempt or left a timer");
+        check(instance.status === "FAILED" && row("VERIFICATION/VERIFY").status === "FAILED", "Activity failure did not stop the flow");
+        check(row("VERIFICATION/VERIFY").attempts === 0 && row("VERIFICATION/VERIFY").nextAt === null, "Activity failure charged an attempt or left a timer");
       }
       if (key === "timeout") check(!dispatcher.workers[0].alive && row("WORKSPACE/RELEASE_NAME").lastError === "timeout", "Timeout was not recorded");
       if (key === "unhosted") check(dispatcher.workers.length === 3 && dispatcher.unhostedStages.length === 0, "Stage is still unhosted");

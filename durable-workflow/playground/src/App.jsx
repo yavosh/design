@@ -30,7 +30,7 @@ export function App() {
   const row = state.rows.find(item => item.step === state.instance.currentStep);
   const due = row.nextAt !== null && row.nextAt <= state.time;
   const next = state.instance.status !== "ACTIVE" ? null : definition.steps[row.step].next;
-  const outcome = state.handler.outcome;
+  const outcome = state.activity.outcome;
   const calls = state.external.calls[row.step] ?? 0;
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export function App() {
   const inspectorData = inspector === "Instance" ? { instance: state.instance, auditLog: state.log }
     : inspector === "Step rows" ? state.rows
     : inspector === "Dispatcher" ? { status: state.dispatcher, virtualSeconds: state.time, workers: state.workers, unhostedStages: state.unhosted }
-    : inspector === "Handler" ? { ...state.handler, lock: state.lock, businessWrites: state.business, events: state.events }
+    : inspector === "Activity" ? { ...state.activity, lock: state.lock, businessWrites: state.business, events: state.events }
     : state.external;
 
   return <main className="playground">
@@ -130,10 +130,10 @@ export function App() {
           {state.unhosted.length > 0 && <span className="node-note">Unhosted: {state.unhosted.join(", ")}</span>}
         </button>
         <Connector />
-        <button aria-current={state.active === "handler" ? "step" : undefined} className={`handler node ${state.active === "handler" ? "is-active" : ""} ${warnings.includes(state.handler.phase) ? "has-warning" : ""}`} onClick={() => inspect("Handler")}>
-          <span className="node-heading"><IconSettings size={34} stroke={1.6} /><strong>Handler</strong></span>
-          {state.active === "handler" && <span className="active-tag" aria-hidden="true">In focus</span>}
-          <span className="node-state">{state.handler.phase}{state.handler.worker ? ` on ${state.handler.worker}` : ""}</span>
+        <button aria-current={state.active === "activity" ? "step" : undefined} className={`activity node ${state.active === "activity" ? "is-active" : ""} ${warnings.includes(state.activity.phase) ? "has-warning" : ""}`} onClick={() => inspect("Activity")}>
+          <span className="node-heading"><IconSettings size={34} stroke={1.6} /><strong>Activity</strong></span>
+          {state.active === "activity" && <span className="active-tag" aria-hidden="true">In focus</span>}
+          <span className="node-state">{state.activity.phase}{state.activity.worker ? ` on ${state.activity.worker}` : ""}</span>
           <span className="lock-line"><IconLock size={16} /><code>{state.lock?.key ?? "workspace_name_7"}</code>{state.lock ? `held by ${state.lock.holder}` : "free"}</span>
           <span className="node-note">{outcome ? `Outcome: ${outcome.type}${outcome.target ? ` → ${outcome.target}` : ""}` : "No outcome to record"}</span>
         </button>
@@ -145,7 +145,7 @@ export function App() {
           <span className="node-note">{calls} {calls === 1 ? "call" : "calls"} for this step{state.external.lastResult ? ` · last: ${state.external.lastResult}` : ""}</span>
         </button>
       </div>
-      <p className="pipeline-caption">Claim and record are engine transactions on the step row. Work belongs to the handler. Select a component to inspect its state.</p>
+      <p className="pipeline-caption">Claim and record are engine transactions on the step row. Work belongs to the activity. Select a component to inspect its state.</p>
     </section>
     <div className="controls">
       <div className="playback-controls">
