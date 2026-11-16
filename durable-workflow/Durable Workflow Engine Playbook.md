@@ -48,11 +48,11 @@ The engine is entity-agnostic. It stores an entity kind and an opaque entity id,
 
 ## Why the engine owns durability
 
-In a traditional system, each service coordinates the work itself. One activity holds the business rule, the retry logic, and the knowledge of what runs next. Three concerns share one piece of code.
+In a traditional system, each service coordinates the work itself. One message handler holds the business rule, the retry logic, and the knowledge of what runs next. Three concerns share one piece of code.
 
-- **Sequencing.** Each activity publishes the event that starts the next one. The route is written down nowhere. To insert a stage, reorder two stages, or reuse a step, you edit several services.
+- **Sequencing.** Each message handler publishes the event that starts the next one. The route is written down nowhere. To insert a stage, reorder two stages, or reuse a step, you edit several services.
 - **Retry.** Each stage implements its own. One retries in memory and loses the retry on restart. Another keeps a hand-rolled durable timer. A third polls. "Is this retried, how often, and with what backoff" has a different answer for every stage.
-- **Business logic.** The rule is the small part. The activity must also know its retry policy, its failure path, and which event advances the flow.
+- **Business logic.** The rule is the small part. The message handler must also know its retry policy, its failure path, and which event advances the flow.
 
 That coordination cost is per step, so teams bundle work to pay it once. For example, setting up a workspace creates the workspace, imports the data, and releases the name reservation in one operation. A failure in the third action can't retry without re-entering the first two. The audit trail records one step where three things happened.
 
