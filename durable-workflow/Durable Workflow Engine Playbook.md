@@ -112,18 +112,24 @@ Every step that calls an external system must start with a completeness check. A
 
 ### An activity
 
-```text
-Activity WORKSPACE/RELEASE_NAME, with at most 10 attempts and a 2-minute maximum duration.
+`WORKSPACE/RELEASE_NAME` · **Attempt limit:** 10 · **Maximum duration:** 2 minutes.
 
-Try to take the lock for the reserved workspace name. If the lock is busy, return Defer for 30 seconds.
-Read the reservation from the external system. If the reservation is already released, return Done.
-Ask the external system to release the reservation.
-If the failure is transient, return Retry for 1 minute.
-If the external system rejects the request, return Failed with the reason.
-Begin a database transaction.
-Record the release and emit the NameReleased event.
-Commit the transaction.
-Return Done.
+```steps
+Acquire the lock
+  Try to take the lock for the reserved workspace name.
+  If the lock is busy, return Defer for 30 seconds.
+Check completeness
+  Read the reservation from the external system.
+  If the reservation is already released, return Done.
+Release the reservation
+  Ask the external system to release the reservation.
+  If the failure is transient, return Retry for 1 minute.
+  If the external system rejects the request, return Failed with the reason.
+Commit the result
+  Begin a database transaction.
+  Record the release and emit the NameReleased event.
+  Commit the transaction.
+  Return Done.
 ```
 
 The activity holds no retry loop, no next event to publish, and no compensation path.
