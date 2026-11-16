@@ -70,6 +70,6 @@ The repository's `scripts/build-site.mjs` combines the design index and playgrou
 The index is published at `/design/`; the EDA playground is published at `/design/eda/`.
 The playbook is generated from Markdown at `/design/eda/guide/`, with section navigation, formatted tables, and code blocks.
 
-## Visual source
+## Icons
 
-[Selected design](../design-options/1.png). Icons use the [Tabler MIT license](src/icons/LICENSE).
+Icons use the [Tabler MIT license](src/icons/LICENSE).

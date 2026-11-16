@@ -4,7 +4,7 @@ final result: blocked
 
 ## Evidence
 
-- Source visual: `/Users/yavosh/Projects/yavosh/design/outbox-to-stream/design-options/1.png`.
+- Original source visual: removed at the user's request.
 - Source dimensions: 1487 × 1058 pixels.
 - Accepted changes: the user requested the title "Outbox event flow", generic record examples and event types, and a link back to the design-guide index.
 - Implementation: https://yavosh.github.io/design/eda/.
@@ -21,6 +21,7 @@ Chrome rendering and interaction checks now run successfully on GitHub Actions.
 Artifact downloads fail in the local session with a network connection error.
 The screenshots could not be opened alongside the source for visual comparison.
 Full-view and focused-region comparison therefore remain blocked.
+The original source image has since been removed, so comparison also requires a replacement reference.
 
 ## Required fidelity surfaces
 
