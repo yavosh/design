@@ -301,7 +301,7 @@ try {
     assert.ok(guideState.sections >= 10);
     assert.ok(guideState.tables > 0);
     assert.ok(guideState.codeBlocks > 0);
-    assert.equal(guideState.stepBoxes, 2);
+    assert.equal(guideState.stepBoxes, 6);
     assert.equal(guideState.diagramNodes, 11);
     assert.equal(guideState.diagramEdges, 13);
     assert.equal(guideState.diagramTitle, "Account onboarding workflow");

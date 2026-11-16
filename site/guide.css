@@ -58,6 +58,8 @@ th, td { padding: 13px 16px; vertical-align: top; border-bottom: 1px solid #dedf
 tr:last-child td { border-bottom: 0; }
 tbody tr:nth-child(even) { background: #f5f4ef; }
 table code { font-size: 12px; }
+#a-flow-step-by-step + p + .table-scroll :is(th:first-child, td:first-child, code) { white-space: nowrap; }
+#the-tables + .table-scroll code { white-space: nowrap; }
 .principle-label { color: #285c3c; font-size: 16px; font-weight: 750; margin: 25px 0 0; }
 .principle-label + p { margin-top: 3px; }
 .callout-label { border-left: 3px solid #557a62; background: #edf2e9; padding: 12px 18px 0; margin-bottom: 0; font-size: 14px; font-weight: 750; color: #31543b; }
