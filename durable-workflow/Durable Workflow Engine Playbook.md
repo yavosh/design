@@ -285,6 +285,47 @@ A definition declares the start step, the terminal steps, a default `next` for e
 }
 ```
 
+### Account onboarding flow
+
+Solid arrows show default transitions. Dashed arrows show declared alternates.
+
+```mermaid
+flowchart TD
+  accTitle: Account onboarding workflow
+  accDescr: The flow starts at SIGNUP/NORMALISE and ends at WELCOME/SEND. Declared alternates allow scheduled starts, name reviews, and data imports.
+
+  signup["SIGNUP/NORMALISE"]
+  profile["PROFILE/ENRICH"]
+  schedule["SCHEDULE/PARK"]
+  verify["VERIFICATION/VERIFY"]
+  reserve["WORKSPACE/RESERVE_NAME"]
+  review["REVIEW/REQUEST"]
+  adjust["WORKSPACE/ADJUST"]
+  create["WORKSPACE/CREATE"]
+  importData["WORKSPACE/IMPORT_DATA"]
+  release["WORKSPACE/RELEASE_NAME"]
+  welcome["WELCOME/SEND"]
+
+  signup --> profile
+  profile --> verify
+  profile -.->|alternate| schedule
+  schedule --> verify
+  verify --> reserve
+  reserve --> create
+  reserve -.->|alternate| review
+  review --> adjust
+  adjust --> create
+  create --> release
+  create -.->|alternate| importData
+  importData --> release
+  release --> welcome
+
+  classDef endpoint fill:#dff2e1,stroke:#2f6e49,stroke-width:2px
+  classDef alternate fill:#fff2da,stroke:#bd812a
+  class signup,welcome endpoint
+  class schedule,review,adjust,importData alternate
+```
+
 ### Declared branches and overrides
 
 Handler-chosen targets are unconstrained. A handler can route to a step the definition doesn't list. The record transaction resolves the target against the instance's pinned definition version and logs three cases:

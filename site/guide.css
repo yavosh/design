@@ -39,6 +39,9 @@ code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospac
 code { font-size: .84em; background: #eeece6; padding: 3px 6px; border-radius: 4px; color: #274362; }
 pre { margin: 22px 0; padding: 22px; background: #172334; color: #e5edf5; border-radius: 9px; overflow-x: auto; font-size: 13px; line-height: 1.75; overflow-wrap: normal; tab-size: 2; }
 pre code { background: none; color: inherit; font-size: inherit; padding: 0; border-radius: 0; }
+.diagram { overflow-x: auto; margin: 22px 0; padding: 20px; border: 1px solid #dadbd8; border-radius: 8px; }
+.diagram .mermaid { margin: 0; padding: 0; background: transparent; color: inherit; overflow: visible; }
+.diagram svg { display: block; height: auto; margin: 0 auto; }
 .steps { list-style: none; max-width: 68ch; margin: 22px 0; padding: 0; }
 .steps > li { position: relative; margin: 0 0 26px; padding: 0; border: 1px solid #dadbd8; border-radius: 8px; }
 .steps > li:last-child { margin-bottom: 0; }
@@ -94,5 +97,7 @@ table code { font-size: 12px; }
   tr { break-inside: avoid; }
   .steps > li, .steps ol > li { break-inside: avoid; }
   .steps-title { background: none; border-bottom-color: black; color: black; }
+  .diagram { overflow: visible; break-inside: avoid; }
+  .diagram svg { max-width: 100%; }
   .steps ol > li::before { background: none; border-color: black; color: black; }
 }

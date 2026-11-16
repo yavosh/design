@@ -26,6 +26,7 @@ export function renderGuide(markdown) {
     return `<div class="table-scroll" role="region" aria-label="Reference table" tabindex="0">${Renderer.prototype.table.call(this, token)}</div>\n`;
   };
   renderer.code = function (token) {
+    if (token.lang === "mermaid") return `<div class="diagram" role="region" aria-label="Flow diagram" tabindex="0"><pre class="mermaid">${escapeHtml(token.text)}</pre></div>\n`;
     if (token.lang !== "steps") return Renderer.prototype.code.call(this, token);
     // An unindented line titles a box; each indented line is one numbered step in it.
     const boxes = [];

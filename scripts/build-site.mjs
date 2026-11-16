@@ -26,13 +26,19 @@ const styles = readFileSync(resolve(root, "site/guide.css"), "utf8");
 for (const { slug, folder, markdown, section, description } of guides) {
   cpSync(resolve(root, folder, "playground/dist/client"), resolve(output, slug), { recursive: true });
   const guide = renderGuide(readFileSync(resolve(root, folder, markdown), "utf8"));
+  const hasDiagrams = guide.html.includes('<pre class="mermaid">');
   const values = {
     title: escapeHtml(guide.title), toc: guide.toc, content: guide.html, styles,
     description: escapeHtml(description), section: escapeHtml(section),
     source: `https://github.com/yavosh/design/blob/main/${folder}/${encodeURIComponent(markdown)}`,
+    scripts: hasDiagrams ? '<script defer src="./mermaid.js"></script><script defer src="./diagrams.js"></script>' : "",
   };
-  const html = template.replace(/\{\{(title|toc|content|styles|description|section|source)\}\}/g, (_, key) => values[key]);
+  const html = template.replace(/\{\{(title|toc|content|styles|description|section|source|scripts)\}\}/g, (_, key) => values[key]);
   mkdirSync(resolve(output, slug, "guide"), { recursive: true });
   writeFileSync(resolve(output, slug, "guide/index.html"), html);
+  if (hasDiagrams) {
+    copyFileSync(resolve(root, "outbox-to-stream/playground/node_modules/@mermaid-js/tiny/dist/mermaid.tiny.js"), resolve(output, slug, "guide/mermaid.js"));
+    copyFileSync(resolve(root, "site/guide-diagrams.js"), resolve(output, slug, "guide/diagrams.js"));
+  }
 }
 console.log("Built design index, playgrounds, and HTML playbooks in dist/site/.");

@@ -279,12 +279,20 @@ try {
 
     await evaluate("document.querySelector('[data-guide=workflow]').parentElement.querySelector('.read-guide').click()");
     await waitForHeading("Durable Workflow Engine Playbook", sessionId);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (await evaluate("document.querySelector('.mermaid svg .node') !== null")) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
     const guideState = await evaluate(`({
       overflow: document.documentElement.scrollWidth > innerWidth,
       sections: document.querySelectorAll('article h2').length,
       tables: document.querySelectorAll('.table-scroll table').length,
       codeBlocks: document.querySelectorAll('pre code').length,
       stepBoxes: document.querySelectorAll('.steps > li').length,
+      diagramNodes: document.querySelectorAll('.mermaid svg .node').length,
+      diagramEdges: document.querySelectorAll('.mermaid svg .flowchart-link').length,
+      diagramTitle: document.querySelector('.mermaid svg title')?.textContent,
+      localDiagrams: [...document.querySelectorAll('script[src]')].every(script => new URL(script.src).origin === location.origin),
       contentsValid: [...document.querySelectorAll('.guide-sidebar a, .mobile-toc a')].every(link => document.getElementById(link.hash.slice(1))),
       section: document.querySelector('.breadcrumbs span').textContent,
       playground: new URL(document.querySelector('.playground-link').href).pathname
@@ -294,6 +302,10 @@ try {
     assert.ok(guideState.tables > 0);
     assert.ok(guideState.codeBlocks > 0);
     assert.equal(guideState.stepBoxes, 2);
+    assert.equal(guideState.diagramNodes, 11);
+    assert.equal(guideState.diagramEdges, 13);
+    assert.equal(guideState.diagramTitle, "Account onboarding workflow");
+    assert.equal(guideState.localDiagrams, true);
     assert.equal(guideState.contentsValid, true);
     assert.equal(guideState.section, "DWE");
     assert.equal(guideState.playground, "/design/workflow/");

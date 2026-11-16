@@ -52,6 +52,25 @@ test("steps blocks accept whitespace indentation and omit empty lists", () => {
   assert.ok(!renderGuide("# Guide\n\n```steps\n```\n").html.includes('<ol class="steps">'));
 });
 
+test("Mermaid blocks render as escaped diagrams and preserve the workflow definition", () => {
+  const source = '# Guide\n\n```mermaid\nflowchart TD\n  A["<script> & text"] --> B\n```\n';
+  const { html } = renderGuide(source);
+  assert.ok(html.includes('<pre class="mermaid">'));
+  assert.ok(html.includes('&lt;script&gt; &amp; text'));
+  assert.ok(!html.includes('language-mermaid'));
+  const markdown = readFileSync(new URL("../../../durable-workflow/Durable Workflow Engine Playbook.md", import.meta.url), "utf8");
+  const definition = JSON.parse(markdown.match(/```json\n([\s\S]*?)\n```/)[1]);
+  const diagram = markdown.match(/```mermaid\n([\s\S]*?)\n```/)[1];
+  const nodes = new Map([...diagram.matchAll(/^  (\w+)\[\(?"([^"]+)"\)?\]/gm)].map(([, id, step]) => [id, step]));
+  assert.deepEqual([...nodes.values()].sort(), Object.keys(definition.steps).sort());
+  const actual = [...diagram.matchAll(/^  (\w+) (-->|-\.->\|alternate\|) (\w+)$/gm)].map(([, from, arrow, to]) => [nodes.get(from), nodes.get(to), arrow === "-->"]);
+  const expected = Object.entries(definition.steps).flatMap(([step, config]) => [
+    ...(config.next ? [[step, config.next, true]] : []),
+    ...(config.alternates ?? []).map(target => [step, target, false]),
+  ]);
+  assert.deepEqual(actual.sort(), expected.sort());
+});
+
 test("repeated headings receive unique, matching contents targets", () => {
   const { html, toc } = renderGuide("# Guide\n\n## Same heading\n\nFirst.\n\n## Same heading\n\nSecond.\n");
   assert.ok(html.includes('id="same-heading"'));
