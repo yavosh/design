@@ -66,7 +66,7 @@ test("one step run claims, works, and records, then the terminal step completes 
   assert.equal(claimed.log.length, createSimulation("normal").log.length, "A claim writes no audit entry");
   const worked = advance(claimed);
   assert.equal(row(worked).status, "RUNNING");
-  assert.equal(worked.handler.outcome.type, "Done");
+  assert.equal(worked.activity.outcome.type, "Done");
   assert.equal(worked.events.at(-1).type, "NameReleased");
   const recorded = advance(worked);
   assert.equal(row(recorded, "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
@@ -110,7 +110,7 @@ test("a retry charges one attempt and waits for the backoff timer", () => {
 
 test("a busy lock defers the step without charging an attempt", () => {
   const worked = run("defer", 2);
-  assert.equal(worked.handler.outcome.type, "Defer");
+  assert.equal(worked.activity.outcome.type, "Defer");
   assert.equal(worked.external.calls["WORKSPACE/RELEASE_NAME"], undefined);
   const recorded = advance(worked);
   assert.deepEqual(row(recorded), { ...row(recorded), status: "PENDING", attempts: 0, deferCount: 1, nextAt: 30 });
@@ -157,12 +157,12 @@ test("a killed process re-drives from the claim's timer with no second external 
   assert.equal(crashed.external.effects[step], 1);
   const reclaimed = run("crash", 4);
   assert.equal(reclaimed.time, 150);
-  assert.equal(reclaimed.handler.worker, "worker-b");
+  assert.equal(reclaimed.activity.worker, "worker-b");
   const state = run("crash");
   assert.equal(row(state, step).status, "COMPLETED");
   assert.equal(state.external.calls[step], 1);
   assert.equal(state.events.filter(event => event.type === "DataImported").length, 1);
-  assert.deepEqual(state.log.filter(entry => entry.step === step && entry.actor === "handler").map(entry => entry.dispatch), [2]);
+  assert.deepEqual(state.log.filter(entry => entry.step === step && entry.actor === "activity").map(entry => entry.dispatch), [2]);
 });
 
 test("an exhausted retry budget fails the instance until an operator retries the step", () => {
@@ -190,10 +190,10 @@ test("an exhausted retry budget fails the instance until an operator retries the
   assert.equal(state.instance.status, "ACTIVE");
 });
 
-test("a handler-returned Failed stops the instance without charging an attempt", () => {
+test("an activity-returned Failed stops the instance without charging an attempt", () => {
   const initial = createSimulation("failed");
   const worked = run("failed", 2);
-  assert.deepEqual(worked.handler.outcome, { type: "Failed", reason: "The account could not be verified." });
+  assert.deepEqual(worked.activity.outcome, { type: "Failed", reason: "The account could not be verified." });
   assert.equal(worked.external.calls[initial.instance.currentStep], 1);
   assert.equal(worked.external.effects[initial.instance.currentStep], undefined);
   assert.deepEqual(worked.business, initial.business);
@@ -205,16 +205,16 @@ test("a handler-returned Failed stops the instance without charging an attempt",
   assert.equal(row(recorded).deferCount, 0);
   assert.equal(row(recorded).lastOutcome, "Failed");
   assert.equal(recorded.instance.status, "FAILED");
-  assert.equal(recorded.instance.failureReason, worked.handler.outcome.reason);
+  assert.equal(recorded.instance.failureReason, worked.activity.outcome.reason);
   assert.equal(recorded.rows.length, initial.rows.length);
   assert.equal(recorded.log.at(-1).outcome, "Failed");
-  assert.equal(recorded.log.at(-1).reason, worked.handler.outcome.reason);
+  assert.equal(recorded.log.at(-1).reason, worked.activity.outcome.reason);
   assert.equal(recorded.log.at(-1).target, null);
 });
 
-test("record rejects an unknown handler outcome instead of completing the step", () => {
+test("record rejects an unknown activity outcome instead of completing the step", () => {
   const worked = run("normal", 2);
-  worked.handler.outcome = { type: "Unknown" };
+  worked.activity.outcome = { type: "Unknown" };
   assert.throws(() => advance(worked), /Unknown outcome/);
   assert.equal(row(worked).status, "RUNNING");
 });
@@ -231,7 +231,7 @@ test("a re-drive completes a missing local commit without repeating the external
   assert.equal(worked.events.filter(event => event.type === "DataImported").length, 1);
 });
 
-test("a handler that ignores cancellation times out and its host terminates", () => {
+test("an activity that ignores cancellation times out and its host terminates", () => {
   assert.equal(row(run("timeout", 1)).nextAt, 150);
   const cancelled = run("timeout", 2);
   assert.equal(cancelled.time, 120);
@@ -248,7 +248,7 @@ test("a handler that ignores cancellation times out and its host terminates", ()
   const reclaimed = advance(advance(terminated));
   assert.equal(reclaimed.time, 190);
   assert.ok(reclaimed.workers[0].leaseExpiresAt <= reclaimed.time, "The lease expires without a deregistration");
-  assert.equal(reclaimed.handler.worker, "worker-b");
+  assert.equal(reclaimed.activity.worker, "worker-b");
   const state = run("timeout");
   assert.equal(row(state, "WORKSPACE/RELEASE_NAME").status, "COMPLETED");
   assert.equal(state.external.effects["WORKSPACE/RELEASE_NAME"], 1);
@@ -269,6 +269,6 @@ test("an unhosted stage stalls with no error until a worker registers for it", (
   assert.deepEqual(joined.unhosted, []);
   assert.deepEqual(joined.workers.at(-1).stages, ["REVIEW"]);
   const claimed = advance(joined);
-  assert.equal(claimed.handler.worker, "worker-c");
+  assert.equal(claimed.activity.worker, "worker-c");
   assert.equal(row(run("unhosted"), "REVIEW/REQUEST").status, "COMPLETED");
 });

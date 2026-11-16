@@ -18,7 +18,7 @@ export const definition = {
   },
 };
 
-// Each step's external effect and the event its handler emits.
+// Each step's external effect and the event its activity emits.
 const effects = {
   "SIGNUP/NORMALISE": ["sign-up normalised", "SignupNormalised"],
   "PROFILE/ENRICH": ["profile enriched", "ProfileEnriched"],
@@ -73,7 +73,7 @@ export const scenarios = {
   },
   failed: {
     name: "The request is rejected",
-    description: "Stop the flow when the handler returns Failed with a reason.",
+    description: "Stop the flow when the activity returns Failed with a reason.",
     failure: true, start: "VERIFICATION/VERIFY", path: ["SIGNUP/NORMALISE", "PROFILE/ENRICH"],
     steps: ["claim", "workFailed", "record"],
   },
@@ -97,7 +97,7 @@ export const scenarios = {
     steps: ["claim", "workAlternate", "record", "claim", "workOverride", "record"],
   },
   crash: {
-    name: "Process dies mid-handler",
+    name: "Process dies mid-activity",
     description: "Kill the worker after its work commits, then watch the timer re-drive the step.",
     failure: true, start: "WORKSPACE/IMPORT_DATA", path: created,
     steps: ["claim", "crash", "timerDue", "claim", "work", "record"],
@@ -110,7 +110,7 @@ export const scenarios = {
     steps: ["claim", "workRetry", "record", "pollMiss", "operatorRetry", "claim", "work", "record"],
   },
   timeout: {
-    name: "Handler ignores cancellation",
+    name: "Activity ignores cancellation",
     description: "Cancel a step that overruns, abandon it, and terminate its host process.",
     failure: true, start: "WORKSPACE/RELEASE_NAME", path: created,
     steps: ["claim", "cancel", "abandon", "hostTerminates", "timerDue", "claim", "work", "record"],
@@ -168,7 +168,7 @@ export function createSimulation(scenario = "normal") {
     rows: [createRow(definition.start, 0)],
     log: [], workers: [workers("worker-a"), workers("worker-b")], lock: null, unhosted: [],
     external: { calls: {}, effects: {}, lastResult: null }, business: [], events: [],
-    handler: { phase: "Idle", worker: null, outcome: null }, dispatcher: "Polling for due rows",
+    activity: { phase: "Idle", worker: null, outcome: null }, dispatcher: "Polling for due rows",
     title: "Start with one due step row", lesson: "This is a simulation. No database or external system is connected.",
     timeline: [], active: "row",
   };
@@ -186,7 +186,7 @@ export function createSimulation(scenario = "normal") {
   if (config.workers) state.workers.forEach(worker => { worker.stages = [...config.workers]; });
   if (config.lock) state.lock = { key: LOCK, holder: config.lock };
   state.external.lastResult = null;
-  state.handler = { phase: "Idle", worker: null, outcome: null };
+  state.activity = { phase: "Idle", worker: null, outcome: null };
   state.dispatcher = "Polling for due rows";
   state.explanation = `${config.path.length ? `One account, account_001, has reached ${config.start}.` : "One account, account_001, starts its onboarding. The engine created the instance and its first step row in one transaction."} ${config.intro ?? "The step row is PENDING and due."} Take the next step to see what the engine does.`;
   return state;
@@ -199,12 +199,12 @@ function claim(state) {
   row.status = "RUNNING";
   row.dispatchCount += 1;
   row.nextAt = state.time + row.maxDuration + GRACE;
-  state.handler = { phase: "Claimed", worker: worker.node, outcome: null };
+  state.activity = { phase: "Claimed", worker: worker.node, outcome: null };
   state.dispatcher = `Claimed by ${worker.node}`;
   return {
     active: "dispatcher",
     title: row.dispatchCount > 1 ? "The dispatcher claims the row again" : "Claim: the engine takes the due row",
-    explanation: `${worker.node} claims ${row.step} in a short transaction. The row is RUNNING, dispatch_count is ${row.dispatchCount}, and next_at moves to virtual ${formatTime(row.nextAt)}. The claim commits before the handler starts.`,
+    explanation: `${worker.node} claims ${row.step} in a short transaction. The row is RUNNING, dispatch_count is ${row.dispatchCount}, and next_at moves to virtual ${formatTime(row.nextAt)}. The claim commits before the activity starts.`,
     lesson: "The moved timer is the crash recovery. If this process dies, the row falls due again.",
     message: `${worker.node} claimed the row. dispatch_count ${row.dispatchCount}; next_at ${formatTime(row.nextAt)}.`,
   };
@@ -215,35 +215,35 @@ function work(state, { fail, target, reason } = {}) {
   if (row.status !== "RUNNING") throw new Error("Work needs a claim");
   const [effect, event] = effects[row.step];
   if (state.lock) {
-    state.handler = { ...state.handler, phase: "Returned Defer", outcome: { type: "Defer", delay: DEFER_DELAY } };
+    state.activity = { ...state.activity, phase: "Returned Defer", outcome: { type: "Defer", delay: DEFER_DELAY } };
     return {
-      active: "handler", kind: "warning",
-      title: "The lock is busy. The handler returns Defer.",
-      explanation: `Another instance, ${state.lock.holder}, holds the lock for the same workspace name. The handler can't take the lock, so it calls nothing. It returns Defer for 30 seconds.`,
-      summary: "The lock was busy, so the handler returned Defer.",
+      active: "activity", kind: "warning",
+      title: "The lock is busy. The activity returns Defer.",
+      explanation: `Another instance, ${state.lock.holder}, holds the lock for the same workspace name. The activity can't take the lock, so it calls nothing. It returns Defer for 30 seconds.`,
+      summary: "The lock was busy, so the activity returned Defer.",
       lesson: "A busy lock is contention, not a failure. Defer charges no attempt.",
       message: `Lock ${LOCK} is held by ${state.lock.holder}. Outcome: Defer for 30 seconds.`,
     };
   }
   if (fail === "notReady") {
-    state.handler = { ...state.handler, phase: "Returned Defer", outcome: { type: "Defer", delay: DEFER_DELAY } };
+    state.activity = { ...state.activity, phase: "Returned Defer", outcome: { type: "Defer", delay: DEFER_DELAY } };
     return {
-      active: "handler", kind: "warning",
-      title: "A dependency is not ready. The handler returns Defer.",
-      explanation: "The handler takes its lock and finds that its input is not back yet. It calls nothing and returns Defer for 30 seconds.",
-      summary: "A dependency was not ready yet, so the handler returned Defer.",
+      active: "activity", kind: "warning",
+      title: "A dependency is not ready. The activity returns Defer.",
+      explanation: "The activity takes its lock and finds that its input is not back yet. It calls nothing and returns Defer for 30 seconds.",
+      summary: "A dependency was not ready yet, so the activity returned Defer.",
       lesson: "Use Defer for contention or a dependency that isn't ready.",
       message: "Dependency not ready. Outcome: Defer for 30 seconds.",
     };
   }
   if (fail === "park") {
     const until = state.time + 21600;
-    state.handler = { ...state.handler, phase: "Returned Park", outcome: { type: "Park", until } };
+    state.activity = { ...state.activity, phase: "Returned Park", outcome: { type: "Park", until } };
     return {
-      active: "handler",
-      title: "The handler returns Park until a known time",
-      explanation: `The account starts later. The handler returns Park with an absolute time: virtual ${formatTime(until)}. It charges nothing and holds nothing while it waits.`,
-      summary: `The handler returned Park until virtual ${formatTime(until)}.`,
+      active: "activity",
+      title: "The activity returns Park until a known time",
+      explanation: `The account starts later. The activity returns Park with an absolute time: virtual ${formatTime(until)}. It charges nothing and holds nothing while it waits.`,
+      summary: `The activity returned Park until virtual ${formatTime(until)}.`,
       lesson: "Park is a planned wait. A long park is healthy; a repeated defer is backpressure.",
       message: `Outcome: Park until virtual ${formatTime(until)}.`,
     };
@@ -251,12 +251,12 @@ function work(state, { fail, target, reason } = {}) {
   if (fail === "transient") {
     state.external.calls[row.step] = (state.external.calls[row.step] ?? 0) + 1;
     state.external.lastResult = "transient error";
-    state.handler = { ...state.handler, phase: "Returned Retry", outcome: { type: "Retry", delay: RETRY_DELAY, error: "External system unavailable" } };
+    state.activity = { ...state.activity, phase: "Returned Retry", outcome: { type: "Retry", delay: RETRY_DELAY, error: "External system unavailable" } };
     return {
       active: "external", kind: "warning",
-      title: "The external system fails. The handler returns Retry.",
-      explanation: "The handler takes its lock, and the completeness check finds nothing. The external call fails with a transient error. The handler commits nothing and returns Retry for 1 minute.",
-      summary: "The external call failed with a transient error, so the handler returned Retry.",
+      title: "The external system fails. The activity returns Retry.",
+      explanation: "The activity takes its lock, and the completeness check finds nothing. The external call fails with a transient error. The activity commits nothing and returns Retry for 1 minute.",
+      summary: "The external call failed with a transient error, so the activity returned Retry.",
       lesson: "Retry is for a failure. It consumes one attempt from the retry budget.",
       message: "External call failed transiently. Outcome: Retry in 1 minute.",
     };
@@ -265,12 +265,12 @@ function work(state, { fail, target, reason } = {}) {
     const reason = "The account could not be verified.";
     state.external.calls[row.step] = (state.external.calls[row.step] ?? 0) + 1;
     state.external.lastResult = "rejected";
-    state.handler = { ...state.handler, phase: "Returned Failed", outcome: { type: "Failed", reason } };
+    state.activity = { ...state.activity, phase: "Returned Failed", outcome: { type: "Failed", reason } };
     return {
-      active: "handler", kind: "warning",
-      title: "The external system rejects the request. The handler returns Failed.",
-      explanation: `${reason} The handler commits no business write or event. It returns Failed with the rejection reason.`,
-      summary: "The external system rejected the request, so the handler returned Failed.",
+      active: "activity", kind: "warning",
+      title: "The external system rejects the request. The activity returns Failed.",
+      explanation: `${reason} The activity commits no business write or event. It returns Failed with the rejection reason.`,
+      summary: "The external system rejected the request, so the activity returned Failed.",
       lesson: "Failed stops the flow immediately. It does not consume the retry budget.",
       message: `Outcome: Failed. ${reason}`,
     };
@@ -286,27 +286,27 @@ function work(state, { fail, target, reason } = {}) {
     state.events.push({ eventId: `evt_${String(state.events.length + 1).padStart(3, "0")}`, type: event, instanceId: state.instance.id });
   }
   const outcome = target ? { type: "Done", target, reason } : { type: "Done" };
-  state.handler = { ...state.handler, phase: "Returned Done", outcome };
+  state.activity = { ...state.activity, phase: "Returned Done", outcome };
   const returned = target ? `Done with target ${target}` : "Done";
   if (found) {
     return {
-      active: "handler", found,
+      active: "activity", found,
       title: "The completeness check absorbs the repeat",
-      explanation: `The handler takes its lock and checks the external system. The work is already done: ${effect}. It makes no second call and returns ${returned}.`,
-      summary: "The completeness check found the work already done, so the handler made no second call.",
+      explanation: `The activity takes its lock and checks the external system. The work is already done: ${effect}. It makes no second call and returns ${returned}.`,
+      summary: "The completeness check found the work already done, so the activity made no second call.",
       lesson: "A lock stops concurrent double submission. Only the completeness check stops a sequential one.",
       message: `Completeness check found the work done. No second external call. Outcome: ${returned}.`,
     };
   }
   const declared = !target || (definition.steps[row.step].alternates ?? []).includes(target);
   return {
-    active: "handler", kind: declared ? "success" : "warning",
-    title: declared ? "Work: the handler runs the business rule" : "The handler picks a target nobody declared",
-    explanation: `The handler takes its lock and runs its completeness check. The work is not done, so it calls the external system: ${effect}. Then it commits its business write and the ${event} event in one transaction. It returns ${returned}.`,
-    summary: `The handler ran its completeness check, called the external system, and committed its write with the ${event} event.`,
+    active: "activity", kind: declared ? "success" : "warning",
+    title: declared ? "Work: the activity runs the business rule" : "The activity picks a target nobody declared",
+    explanation: `The activity takes its lock and runs its completeness check. The work is not done, so it calls the external system: ${effect}. Then it commits its business write and the ${event} event in one transaction. It returns ${returned}.`,
+    summary: `The activity ran its completeness check, called the external system, and committed its write with the ${event} event.`,
     lesson: target
-      ? declared ? "A declared alternate is a routine branch. The flow works as designed." : "Handler targets are unconstrained. A handler can route to a step the definition doesn't list."
-      : "The handler holds no retry loop and publishes no next step. It only returns an outcome.",
+      ? declared ? "A declared alternate is a routine branch. The flow works as designed." : "Activity targets are unconstrained. An activity can route to a step the definition doesn't list."
+      : "The activity holds no retry loop and publishes no next step. It only returns an outcome.",
     message: `External call succeeded: ${effect}. Business write and ${event} committed. Outcome: ${returned}.`,
   };
 }
@@ -331,14 +331,14 @@ function chargeAttempt(state, row, entry, error) {
 
 function record(state) {
   const row = currentRow(state);
-  const outcome = state.handler.outcome;
+  const outcome = state.activity.outcome;
   if (row.status !== "RUNNING" || !outcome) throw new Error("Record needs an outcome");
   if (!["Done", "Retry", "Defer", "Park", "Failed"].includes(outcome.type)) throw new Error(`Unknown outcome: ${outcome.type}`);
-  state.handler = { phase: "Idle", worker: null, outcome: null };
+  state.activity = { phase: "Idle", worker: null, outcome: null };
   state.dispatcher = "Polling for due rows";
   row.lastOutcome = outcome.type;
   if (outcome.type === "Retry") {
-    const exhausted = chargeAttempt(state, row, { outcome: "Retry", actor: "handler" }, outcome.error);
+    const exhausted = chargeAttempt(state, row, { outcome: "Retry", actor: "activity" }, outcome.error);
     if (exhausted) {
       return {
         active: "row", kind: "warning",
@@ -364,7 +364,7 @@ function record(state) {
     row.status = "PENDING";
     row.deferCount += 1;
     row.nextAt = state.time + outcome.delay;
-    append(state, row, { from: "RUNNING", to: "PENDING", outcome: "Defer", actor: "handler" });
+    append(state, row, { from: "RUNNING", to: "PENDING", outcome: "Defer", actor: "activity" });
     return {
       active: "row", kind: "warning",
       title: "Record: a deferral, with no attempt charged",
@@ -378,7 +378,7 @@ function record(state) {
   if (outcome.type === "Park") {
     row.status = "PARKED";
     row.nextAt = outcome.until;
-    append(state, row, { from: "RUNNING", to: "PARKED", outcome: "Park", actor: "handler" });
+    append(state, row, { from: "RUNNING", to: "PARKED", outcome: "Park", actor: "activity" });
     return {
       active: "row",
       title: "Record: the row is PARKED",
@@ -395,14 +395,14 @@ function record(state) {
     row.lastError = outcome.reason;
     state.instance.status = "FAILED";
     state.instance.failureReason = outcome.reason;
-    append(state, row, { from: "RUNNING", to: "FAILED", outcome: "Failed", actor: "handler", reason: outcome.reason });
+    append(state, row, { from: "RUNNING", to: "FAILED", outcome: "Failed", actor: "activity", reason: outcome.reason });
     return {
       active: "row", kind: "warning",
       title: "Record: Failed stops the flow",
       explanation: `The engine marks the step and its instance FAILED in one transaction. It clears next_at and records the reason: ${outcome.reason} No counter changes and no next row is created.`,
       summary: "The engine failed the step and its instance without charging an attempt.",
       shortTitle: "Failed. The flow stops.",
-      lesson: "A handler-returned Failed is a final decision. An operator must intervene before the step can run again.",
+      lesson: "An activity-returned Failed is a final decision. An operator must intervene before the step can run again.",
       message: `${row.step} FAILED. Instance ${state.instance.id} FAILED. ${outcome.reason}`,
     };
   }
@@ -414,7 +414,7 @@ function record(state) {
   row.nextAt = null;
   state.instance.lastProgressAt = state.time;
   append(state, row, {
-    from: "RUNNING", to: "COMPLETED", outcome: "Done", actor: "handler",
+    from: "RUNNING", to: "COMPLETED", outcome: "Done", actor: "activity",
     target, defaultTarget: step.next, wasOverride, reason: target === step.next ? null : outcome.reason,
   });
   if (!target) {
@@ -492,7 +492,7 @@ function timerDue(state) {
   if (row.lastError === "timeout") {
     return { ...text,
       explanation: `${clock} The backoff after the timeout has elapsed. The lease of the terminated worker has expired, and it sent no deregistration.`,
-      lesson: "A lease that expires without a deregistration marks a host terminated for an uncooperative handler." };
+      lesson: "A lease that expires without a deregistration marks a host terminated for an uncooperative activity." };
   }
   return { ...text,
     explanation: `${clock} The backoff has elapsed, and the row is due again.`,
@@ -501,18 +501,18 @@ function timerDue(state) {
 
 function crash(state) {
   const row = currentRow(state);
-  const worker = state.workers.find(item => item.node === state.handler.worker);
+  const worker = state.workers.find(item => item.node === state.activity.worker);
   const [effect] = effects[row.step];
   work(state);
   worker.alive = false;
-  state.handler = { phase: "Process killed", worker: worker.node, outcome: null };
+  state.activity = { phase: "Process killed", worker: worker.node, outcome: null };
   state.dispatcher = `${worker.node} is down`;
   return {
-    active: "handler", kind: "warning",
-    title: "The process dies mid-handler",
-    explanation: `The handler calls the external system and commits its own transaction: ${effect}. Then ${worker.node} is killed before the handler returns. The engine records nothing, and the row stays RUNNING with the claim's timer.`,
+    active: "activity", kind: "warning",
+    title: "The process dies mid-activity",
+    explanation: `The activity calls the external system and commits its own transaction: ${effect}. Then ${worker.node} is killed before the activity returns. The engine records nothing, and the row stays RUNNING with the claim's timer.`,
     lesson: "A crash between work and record leaves work with no audit entry. The dispatch number gap makes it detectable.",
-    message: `${worker.node} killed after the handler's commit. No outcome recorded. Row stays RUNNING.`,
+    message: `${worker.node} killed after the activity's commit. No outcome recorded. Row stays RUNNING.`,
   };
 }
 
@@ -565,13 +565,13 @@ function cancel(state) {
   state.lock = { key: LOCK, holder: state.instance.id };
   state.external.calls[row.step] = (state.external.calls[row.step] ?? 0) + 1;
   state.external.lastResult = "no response";
-  state.handler = { ...state.handler, phase: "Ignoring cancellation" };
+  state.activity = { ...state.activity, phase: "Ignoring cancellation" };
   return {
-    active: "handler", kind: "warning",
+    active: "activity", kind: "warning",
     title: "The step exceeds its maximum duration",
-    explanation: "The handler took its lock and called the external system. The call hangs. At the 2-minute maximum duration, the engine signals cancellation. This handler ignores the signal and keeps its lock.",
-    lesson: "A well-behaved handler abandons its external call and returns. One that ignores cancellation is a defect.",
-    message: `max_duration reached at virtual ${formatTime(state.time)}. Cancellation signalled; the handler ignores it.`,
+    explanation: "The activity took its lock and called the external system. The call hangs. At the 2-minute maximum duration, the engine signals cancellation. This activity ignores the signal and keeps its lock.",
+    lesson: "A well-behaved activity abandons its external call and returns. One that ignores cancellation is a defect.",
+    message: `max_duration reached at virtual ${formatTime(state.time)}. Cancellation signalled; the activity ignores it.`,
   };
 }
 
@@ -580,26 +580,26 @@ function abandon(state) {
   state.time += CANCEL_GRACE;
   row.lastOutcome = "Timeout";
   chargeAttempt(state, row, { outcome: "Timeout", actor: "dispatcher" }, "timeout");
-  state.handler = { ...state.handler, phase: "Abandoned, still running" };
+  state.activity = { ...state.activity, phase: "Abandoned, still running" };
   return {
     active: "row", kind: "warning",
     title: "The engine stops waiting and records a timeout",
-    explanation: `After a 10-second grace period, the engine abandons the handler. It records a timeout: attempts is ${row.attempts}, last_error names the timeout, and next_at is virtual ${formatTime(row.nextAt)}. The handler still runs and still holds its lock.`,
-    lesson: "A timeout consumes an attempt, like a thrown error. last_error separates it from a handler-returned Failed.",
-    message: `Timeout recorded. attempts ${row.attempts}/${row.maxAttempts}; next_at ${formatTime(row.nextAt)}. The handler still holds its lock.`,
+    explanation: `After a 10-second grace period, the engine abandons the activity. It records a timeout: attempts is ${row.attempts}, last_error names the timeout, and next_at is virtual ${formatTime(row.nextAt)}. The activity still runs and still holds its lock.`,
+    lesson: "A timeout consumes an attempt, like a thrown error. last_error separates it from an activity-returned Failed.",
+    message: `Timeout recorded. attempts ${row.attempts}/${row.maxAttempts}; next_at ${formatTime(row.nextAt)}. The activity still holds its lock.`,
   };
 }
 
 function hostTerminates(state) {
-  const worker = state.workers.find(item => item.node === state.handler.worker);
+  const worker = state.workers.find(item => item.node === state.activity.worker);
   worker.alive = false;
   state.lock = null;
-  state.handler = { phase: "Host terminated", worker: worker.node, outcome: null };
+  state.activity = { phase: "Host terminated", worker: worker.node, outcome: null };
   state.dispatcher = `${worker.node} is down`;
   return {
-    active: "handler", kind: "warning",
+    active: "activity", kind: "warning",
     title: "The host process terminates",
-    explanation: `Most runtimes can't kill a running task, and this handler could still commit. So ${worker.node} exits on purpose. Its connection drops, and the database releases the lock. It sends no deregistration, so its lease runs out.`,
+    explanation: `Most runtimes can't kill a running task, and this activity could still commit. So ${worker.node} exits on purpose. Its connection drops, and the database releases the lock. It sends no deregistration, so its lease runs out.`,
     lesson: "Failing fast is the proportionate response. The step re-drives on another node.",
     message: `${worker.node} terminated. Lock released. Its lease is left to expire.`,
   };
@@ -640,7 +640,7 @@ function run(state, options = {}) {
   if (waited) timerDue(state);
   const prefix = waited ? `The timer fell due at virtual ${formatTime(state.time)}. ` : "";
   claim(state);
-  const worker = state.handler.worker;
+  const worker = state.activity.worker;
   if (options.crash) {
     const crashed = crash(state);
     return { ...crashed, active: "row", explanation: `${prefix}${worker} claimed the row. ${crashed.explanation}` };
@@ -668,7 +668,7 @@ const actions = {
   workFailed: state => work(state, { fail: "rejected" }),
   workPark: state => work(state, { fail: "park" }),
   workAlternate: state => work(state, alternate(state)),
-  workOverride: state => work(state, { target: "WORKSPACE/CREATE", reason: "The review confirmed the name, so the handler skipped WORKSPACE/ADJUST." }),
+  workOverride: state => work(state, { target: "WORKSPACE/CREATE", reason: "The review confirmed the name, so the activity skipped WORKSPACE/ADJUST." }),
   run: state => run(state),
   runRetry: state => run(state, { fail: "transient" }),
   runWait: state => run(state, { fail: "notReady" }),

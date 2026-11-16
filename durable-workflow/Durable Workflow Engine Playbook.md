@@ -2,7 +2,7 @@ Contents
 
 - [Why an engine](#why-the-engine-owns-durability)
 - [One step run](#one-step-run-claim-work-record)
-- [Outcomes](#outcomes-what-a-handler-can-return)
+- [Outcomes](#outcomes-what-an-activity-can-return)
 - [Step timeout](#step-timeout)
 - [Instances](#instances-one-flow-over-one-entity)
 - [Dispatch](#dispatch-the-step-row-is-the-queue)
@@ -18,7 +18,7 @@ Contents
 
 # Durable Workflow Engine Playbook
 
-This note explains how a service runs a multi-step process durably on a relational database. A process is a fixed pipeline of stages, and each stage has one or more steps. The engine owns retries, timers, serial execution, and the move from one step to the next. A step holds the business rule and little else.
+This note explains how a service runs a multi-step process durably on a relational database. A process is a fixed pipeline of stages, and each stage has one or more steps. The engine owns retries, timers, serial execution, and the move from one step to the next. An activity implements a step's business rule.
 
 The examples use language-neutral pseudocode and data structures. Adapt transactions, locks, and timers to your platform. Attempt limits, delays, and lease lengths are example settings.
 
@@ -34,7 +34,7 @@ The engine invokes each step at least once per instance. A crash or a lost engin
 
 Effect once
 
-Each handler checks whether its work is already done, so a repeat invocation changes nothing.
+Each activity checks whether its work is already done, so a repeat invocation changes nothing.
 
 Atomic
 
@@ -48,11 +48,11 @@ The engine is entity-agnostic. It stores an entity kind and an opaque entity id,
 
 ## Why the engine owns durability
 
-In a traditional system, each service coordinates the work itself. One handler holds the business rule, the retry logic, and the knowledge of what runs next. Three concerns share one piece of code.
+In a traditional system, each service coordinates the work itself. One activity holds the business rule, the retry logic, and the knowledge of what runs next. Three concerns share one piece of code.
 
-- **Sequencing.** Each handler publishes the event that starts the next one. The route is written down nowhere. To insert a stage, reorder two stages, or reuse a step, you edit several services.
+- **Sequencing.** Each activity publishes the event that starts the next one. The route is written down nowhere. To insert a stage, reorder two stages, or reuse a step, you edit several services.
 - **Retry.** Each stage implements its own. One retries in memory and loses the retry on restart. Another keeps a hand-rolled durable timer. A third polls. "Is this retried, how often, and with what backoff" has a different answer for every stage.
-- **Business logic.** The rule is the small part. The handler must also know its retry policy, its failure path, and which event advances the flow.
+- **Business logic.** The rule is the small part. The activity must also know its retry policy, its failure path, and which event advances the flow.
 
 That coordination cost is per step, so teams bundle work to pay it once. For example, setting up a workspace creates the workspace, imports the data, and releases the name reservation in one operation. A failure in the third action can't retry without re-entering the first two. The audit trail records one step where three things happened.
 
@@ -61,18 +61,18 @@ Execution order has the same problem. A pipeline needs two properties that are r
 - **Serial within an instance.** The steps of one instance run strictly one at a time and never overlap.
 - **Parallel across instances.** Many instances progress at once. Throughput comes from here.
 
-An engine separates the concerns. The handler keeps the business rule. The engine takes the retry, the timers, and the sequence.
+An engine separates the concerns. The activity keeps the business rule. The engine takes the retry, the timers, and the sequence.
 
 Principle
 
-A handler is the business rule, a lock, and a completeness check. Retry, timers, serial execution, and transitions belong to the engine.
+An activity is the business rule, a lock, and a completeness check. Retry, timers, serial execution, and transitions belong to the engine.
 
 ## One step run: claim, work, record
 
-A step run uses three transactions in one process. The boundary between them is the design. CLAIM and RECORD are the engine's bookkeeping. WORK belongs to the handler.
+A step run uses three transactions in one process. The boundary between them is the design. CLAIM and RECORD are the engine's bookkeeping. WORK belongs to the activity.
 
 1. **Claim.** The engine takes a due step row and marks it `RUNNING`. It increments `dispatch_count` and moves the timer forward. The count is now crash-durable.
-2. **Work.** The handler takes its lock and runs a completeness check. If the work is not done, it calls the external system. Then it commits its business writes and its events in its own transaction.
+2. **Work.** The activity takes its lock and runs a completeness check. If the work is not done, it calls the external system. Then it commits its business writes and its events in its own transaction.
 3. **Record.** The engine writes the outcome, creates the next step row with its input, appends the audit entry, and updates the instance position.
 
 ```steps
@@ -84,15 +84,15 @@ Claim: one short database transaction
   Set next_at to the current time plus max_duration plus a grace period.
   Commit the transaction.
 Work: outside the transaction
-  Run each handler, up to the concurrency limit.
+  Run each activity, up to the concurrency limit.
 ```
 
-- Advancing the timer is part of the claim. Otherwise the row stays due while the handler runs, and every poll picks it up again.
-- Skipping locked rows protects a row only while a transaction holds it. The claim commits before the handler starts, so the timer must carry the protection afterwards.
+- Advancing the timer is part of the claim. Otherwise the row stays due while the activity runs, and every poll picks it up again.
+- Skipping locked rows protects a row only while a transaction holds it. The claim commits before the activity starts, so the timer must carry the protection afterwards.
 
-### Why the handler owns the work transaction
+### Why the activity owns the work transaction
 
-The handler owns locking and serialization. The engine can't wrap that transaction without constraining what it delegated. Events join the handler's open transaction, so they commit with the business change. There is no dual write.
+The activity owns locking and serialization. The engine can't wrap that transaction without constraining what it delegated. Events join the activity's open transaction, so they commit with the business change. There is no dual write.
 
 Don't hold a database transaction open across the external call. Call the external system first, then open the transaction that records the result.
 
@@ -102,18 +102,18 @@ Both are engine bookkeeping. A lost write leaves the step row non-terminal with 
 
 ### Two levels of serialization
 
-Within an instance, serialization costs nothing. One active step per instance means the steps never overlap. The handler's lock stops two concurrent deliveries of the same step. The second delivery returns `Defer`.
+Within an instance, serialization costs nothing. One active step per instance means the steps never overlap. The activity's lock stops two concurrent deliveries of the same step. The second delivery returns `Defer`.
 
-Some work must serialize across instances, such as items that share a resource, a batch, or a time window. The handler then locks a group key instead of the instance key. Only the handler knows what the group is, so locking belongs to the handler. The mechanism is the same: acquire the lock, or return `Defer`.
+Some work must serialize across instances, such as items that share a resource, a batch, or a time window. The activity then locks a group key instead of the instance key. Only the activity knows what the group is, so locking belongs to the activity. The mechanism is the same: acquire the lock, or return `Defer`.
 
 Contract
 
 Every step that calls an external system must start with a completeness check. A lock covers concurrent double submission. Only the completeness check covers sequential double submission, because a crashed attempt releases its lock and the re-drive runs again.
 
-### A step
+### An activity
 
 ```text
-Step WORKSPACE/RELEASE_NAME, with at most 10 attempts and a 2-minute maximum duration.
+Activity WORKSPACE/RELEASE_NAME, with at most 10 attempts and a 2-minute maximum duration.
 
 Try to take the lock for the reserved workspace name. If the lock is busy, return Defer for 30 seconds.
 Read the reservation from the external system. If the reservation is already released, return Done.
@@ -126,9 +126,9 @@ Commit the transaction.
 Return Done.
 ```
 
-The handler holds no retry loop, no next event to publish, and no compensation path.
+The activity holds no retry loop, no next event to publish, and no compensation path.
 
-## Outcomes: what a handler can return
+## Outcomes: what an activity can return
 
 | Outcome | Status after | Counters | `next_at` |
 | --- | --- | --- | --- |
@@ -162,15 +162,15 @@ The engine never re-runs a terminal step. Only an operator can, and the audit lo
 
 Trap
 
-`RUNNING` records that invocation began and carries no liveness. A row sits there for the length of a handler, and indefinitely after a crash. Nothing can tell the two apart. Don't branch on the status, and don't alert on time in `RUNNING`. Alert on an overdue `next_at` and a climbing `dispatch_count`.
+`RUNNING` records that invocation began and carries no liveness. A row sits there for the length of an activity, and indefinitely after a crash. Nothing can tell the two apart. Don't branch on the status, and don't alert on time in `RUNNING`. Alert on an overdue `next_at` and a climbing `dispatch_count`.
 
 ### Payload
 
 `Done` can carry a payload. The engine serializes it to JSON and writes it to the next step's `input_data` in the record transaction. The receiving step declares its own input type, so the engine stores no type discriminator.
 
-Deserialization is best-effort. On failure, the engine passes the raw JSON to the handler and leaves the typed input at its default. A handler can then fall back instead of failing on a shape change.
+Deserialization is best-effort. On failure, the engine passes the raw JSON to the activity and leaves the typed input at its default. An activity can then fall back instead of failing on a shape change.
 
-The payload is forward-flowing input and not a result cache. Steps also receive the entity kind and id, so they can read the entity directly. Payload contents, including anything sensitive, are the handler's responsibility.
+The payload is forward-flowing input and not a result cache. Steps also receive the entity kind and id, so they can read the entity directly. Payload contents, including anything sensitive, are the activity's responsibility.
 
 ## Step timeout
 
@@ -182,14 +182,14 @@ Don't copy
 
 A fixed fallback timer re-dispatches a healthy slow step while it's still working. The new invocation blocks on the step's own lock and returns `Defer`. The cycle repeats and inflates `defer_count`, which is the signal that should mean contention.
 
-When a step exceeds its duration, the engine stops the handler in two stages:
+When a step exceeds its duration, the engine stops the activity in two stages:
 
-1. **Cancel.** The engine signals cancellation at `max_duration`. A well-behaved handler abandons its external call and returns.
-2. **Abandon.** If the handler hasn't returned after a short grace period, the engine stops waiting and records a timeout.
+1. **Cancel.** The engine signals cancellation at `max_duration`. A well-behaved activity abandons its external call and returns.
+2. **Abandon.** If the activity hasn't returned after a short grace period, the engine stops waiting and records a timeout.
 
-Most runtimes can't kill a running task. A handler that ignores cancellation keeps its lock and can still commit after the engine recorded a timeout. So the escalation ends in a deliberate choice: the host process terminates. The connection drops, the database releases the lock, and the step re-drives on another node. A handler that ignores cancellation is a defect, and failing fast is the proportionate response.
+Most runtimes can't kill a running task. An activity that ignores cancellation keeps its lock and can still commit after the engine recorded a timeout. So the escalation ends in a deliberate choice: the host process terminates. The connection drops, the database releases the lock, and the step re-drives on another node. An activity that ignores cancellation is a defect, and failing fast is the proportionate response.
 
-A timeout consumes an attempt and behaves like a thrown error. `last_error` distinguishes a timeout from a handler-returned `Failed`.
+A timeout consumes an attempt and behaves like a thrown error. `last_error` distinguishes a timeout from an activity-returned `Failed`.
 
 ## Instances: one flow over one entity
 
@@ -236,8 +236,8 @@ A stage that no group hosts stalls with no error. Its steps sit in `PENDING` wit
 
 A process registers itself at startup with the stages it can run, then renews a lease. A stage with no live registration is an unhosted stage. That is a query, not an inference.
 
-- **Register what you can run.** The registration is the configured stage filter intersected with the stages that have a registered handler. A host with no filter registers the full set, so no reader has to interpret an empty list.
-- **Fail the node on a missing handler.** A configured stage with no registered handler is a startup failure for that node.
+- **Register what you can run.** The registration is the configured stage filter intersected with the stages that have a registered activity. A host with no filter registers the full set, so no reader has to interpret an empty list.
+- **Fail the node on a missing activity.** A configured stage with no registered activity is a startup failure for that node.
 - **Liveness is the lease.** A node is live while `lease_expires_at` is in the future. Don't add a status column, because it would be a second source of truth.
 - **Stamp the lease with the database clock.** Many nodes write these rows, and readers compare the rows against each other. An ordinary local timer decides when to send a heartbeat.
 - **Example settings.** A 60-second lease renewed every 20 seconds survives two missed heartbeats. Keep the renewal interval well under a third of the lease.
@@ -259,11 +259,11 @@ Report coverage as a metric and an alert. Don't wire it to a health probe. An un
 
 ## Definitions: the flow as data
 
-Stages, steps, and entity kinds are named constants that the code maps to handlers. A definition can name only a step that the code declares. A definition that names a step the running build lacks is a hard startup failure.
+Stages, steps, and entity kinds are named constants that the code maps to activities. A definition can name only a step that the code declares. A definition that names a step the running build lacks is a hard startup failure.
 
 Persist the names of those constants and never their ordinals. An ordinal silently re-points every stored row when someone inserts a member.
 
-A definition declares the start step, the terminal steps, a default `next` for each step, and the alternates a handler may choose:
+A definition declares the start step, the terminal steps, a default `next` for each step, and the alternates an activity may choose:
 
 ```json
 {
@@ -328,9 +328,9 @@ flowchart TD
 
 ### Declared branches and overrides
 
-Handler-chosen targets are unconstrained. A handler can route to a step the definition doesn't list. The record transaction resolves the target against the instance's pinned definition version and logs three cases:
+Activity-chosen targets are unconstrained. An activity can route to a step the definition doesn't list. The record transaction resolves the target against the instance's pinned definition version and logs three cases:
 
-| Handler returned | Target compared with default | `was_override` | Reason |
+| Activity returned | Target compared with default | `was_override` | Reason |
 | --- | --- | --- | --- |
 | `Done` with no target | Same | `false` | None |
 | A declared alternate | Differs | `false` | Recorded |
@@ -364,7 +364,7 @@ Run the publish in one transaction:
 
 Validate at publish time and not at execution time. A bad edit must fail for the editing user, not in production against a live entity. The gate checks three things:
 
-- Every referenced step has a registered handler.
+- Every referenced step has a registered activity.
 - Terminal targets exist and are reachable.
 - Selection rules don't overlap ambiguously.
 
@@ -391,7 +391,7 @@ The table follows one account whose workspace name needs a review. There is one 
 | 7 | `REVIEW/REQUEST` | Review applied, so `Done` | `COMPLETED`. `WORKSPACE/ADJUST` created. |
 | 8 | `WORKSPACE/ADJUST` | `Done` | `COMPLETED`. `WORKSPACE/CREATE` created. |
 | 9 | `WORKSPACE/CREATE` | `Done` with target `WORKSPACE/IMPORT_DATA` | `COMPLETED`. |
-| 10 | `WORKSPACE/IMPORT_DATA` | The process is killed mid-handler | Stays `RUNNING` with the claim's timer. |
+| 10 | `WORKSPACE/IMPORT_DATA` | The process is killed mid-activity | Stays `RUNNING` with the claim's timer. |
 | 11 | `WORKSPACE/IMPORT_DATA` | Re-driven when `next_at` falls due. The completeness check finds the imported data, so `Done` | `COMPLETED`. `WORKSPACE/RELEASE_NAME` created. |
 | 12 | `WORKSPACE/RELEASE_NAME` | `Done` | `COMPLETED`. `WELCOME/SEND` created. |
 | 13 | `WELCOME/SEND` | `Done` on a declared terminal | `COMPLETED`. The instance is `COMPLETED`. |
@@ -432,10 +432,10 @@ Two rows are worth reading closely. In row 10, a bundled operation with no durab
 | `status` | `PENDING`, `RUNNING`, `PARKED`, `COMPLETED`, or `FAILED`. |
 | `attempts`, `max_attempts` | The retry budget and its ceiling. `attempts` is written only in the record transaction. |
 | `max_duration` | The step's timeout. It also sets the claim's fallback timer. |
-| `dispatch_count` | Invocations, written before the handler runs so that it survives a kill. A signal, not a bound. |
+| `dispatch_count` | Invocations, written before the activity runs so that it survives a kill. A signal, not a bound. |
 | `defer_count` | Deferrals. Separate from `dispatch_count`, because "keeps waiting" and "keeps dying" are different signals. |
 | `next_at` | The durable timer. Retry backoff, defer delay, park time, and crash recovery all write here. |
-| `last_outcome`, `last_error` | Diagnostic. `last_error` separates a timeout from a handler-returned `Failed`. |
+| `last_outcome`, `last_error` | Diagnostic. `last_error` separates a timeout from an activity-returned `Failed`. |
 | `input_data` | What the previous step chose to pass forward. |
 
 Three constraints carry design weight:
@@ -450,7 +450,7 @@ The log is append-only. Each entry records the step, the status change, the outc
 
 - The record transaction writes the entry, so the entry can't diverge from the state it describes.
 - An undeclared target without a reason violates a constraint.
-- `actor` records the role: handler, dispatcher, operator, or engine. It doesn't record the node.
+- `actor` records the role: activity, dispatcher, operator, or engine. It doesn't record the node.
 - The log records what the engine observed. A crash between work and record leaves work with no entry. The dispatch number comes from a pre-invocation counter, so a gap in the sequence makes that detectable.
 
 ## What happens when something fails
@@ -458,12 +458,12 @@ The log is append-only. Each entry records the step, the status change, the outc
 | Failure | Result | How you see it |
 | --- | --- | --- |
 | Process dies before the claim commits | The row stays due. The next poll takes it. | Nothing to see. |
-| Process dies mid-handler | The row stays `RUNNING` with the claim's timer. It re-drives when due, and the completeness check absorbs the repeat. | A gap in the log's dispatch numbers. `dispatch_count` climbs. |
+| Process dies mid-activity | The row stays `RUNNING` with the claim's timer. It re-drives when due, and the completeness check absorbs the repeat. | A gap in the log's dispatch numbers. `dispatch_count` climbs. |
 | Record transaction is lost | The row re-drives. The completeness check returns `Done` and the transition resolves again. | A gap in the log's dispatch numbers. |
 | External system fails transiently | `Retry` with backoff. The step fails when the budget is exhausted. | `attempts` on the row. Failed-instance alert at exhaustion. |
 | The lock is busy | `Defer`. No attempt is charged. | `defer_count` climbs. |
-| Handler exceeds its maximum duration | The engine cancels the handler. The timeout consumes an attempt. | Timeouts by step. `last_error` names the timeout. |
-| Handler ignores cancellation | The host process terminates. The database releases the lock and the step re-drives on another node. | A worker lease that expires without a deregistration. |
+| Activity exceeds its maximum duration | The engine cancels the activity. The timeout consumes an attempt. | Timeouts by step. `last_error` names the timeout. |
+| Activity ignores cancellation | The host process terminates. The database releases the lock and the step re-drives on another node. | A worker lease that expires without a deregistration. |
 | No worker hosts a stage | Rows sit in `PENDING` with a due timer. | Unhosted-stage alert within a lease period. Overdue `next_at`. |
 | A transition fires twice | The database rejects the second active step row. | A constraint violation in the logs. |
 | A step fails | The instance fails and its remaining step row terminates. An operator retry resumes the flow. | Failed-instance alert. |
@@ -478,7 +478,7 @@ Emit spans and metrics for step start, outcome, and attempts. Keep stage, step, 
 | --- | --- |
 | Steps overdue on `next_at` | Due rows that nothing has claimed. Your main alert. |
 | Dispatcher due count | Rows waiting for a worker. |
-| Step duration | Time in the handler, as a histogram by stage and step. |
+| Step duration | Time in the activity, as a histogram by stage and step. |
 | Outcomes | Counters by stage, step, and outcome. |
 | `dispatch_count` without completion | A step that keeps dying. |
 | `defer_count` | A step that keeps waiting. |
@@ -489,7 +489,7 @@ Emit spans and metrics for step start, outcome, and attempts. Keep stage, step, 
 
 Alert on overdue steps, on `dispatch_count` climbing without completion, and on `defer_count` climbing. Alert on timeouts by step and on any unhosted stage. Alert on an undeclared transition that skips a stage carrying a control. Never alert on time in `RUNNING`.
 
-- A host terminated for an uncooperative handler must be distinguishable from an ordinary restart. It shows up as a lease that expires without a deregistration.
+- A host terminated for an uncooperative activity must be distinguishable from an ordinary restart. It shows up as a lease that expires without a deregistration.
 - Backlog and age of undelivered events belong to event delivery. See the [Outbox-to-Stream Playbook](https://yavosh.github.io/design/eda/guide/).
 - Propagate the W3C `traceparent` from the step's span into the events it emits.
 
@@ -499,15 +499,15 @@ Alert on overdue steps, on `dispatch_count` climbing without completion, and on 
 
 - A database with transactions, row locks that can skip locked rows, advisory or named locks, and partial unique indexes.
 - A background task per worker process, with an injectable clock.
-- Handlers that honor cancellation.
+- Activities that honor cancellation.
 - A completeness check for every step that calls an external system.
-- A way to commit events in the handler's transaction and deliver them afterwards, such as a transactional outbox.
+- A way to commit events in the activity's transaction and deliver them afterwards, such as a transactional outbox.
 
 ### Build order
 
-1. **Name the steps.** Turn the current stages and steps into named constants mapped to handlers. Everything else references them.
+1. **Name the steps.** Turn the current stages and steps into named constants mapped to activities. Everything else references them.
 2. **Schema.** Add the tables, the constraints, and the immutability trigger. Alter no existing object.
-3. **Contracts.** Define the step key, the outcomes, the retry policy, the step context, and the step interface.
+3. **Contracts.** Define the step key, the outcomes, the retry policy, the step context, and the activity interface.
 4. **Step repository.** Claim, create next, complete, schedule retry, schedule defer, park, fail, and take due. Verify that concurrent claims serialize.
 5. **Step runner.** Claim, work, record. Verify every outcome and a killed process.
 6. **Timer dispatcher.** One background task with a configurable concurrency limit and an optional stage filter.
@@ -530,19 +530,19 @@ That choice moves a risk instead of removing it. The dispatcher doesn't run insi
 
 ### Design choices
 
-- **No workflow framework.** The design borrows the vocabulary of durable execution platforms: an activity is a step, and a durable timer is `next_at`. It adopts none of them. A separate cluster brings its own datastore, deployment, and recovery story. Reimplementing a subset is an accepted cost.
-- **No replay.** Handlers are ordinary code with no determinism rules. The price is the completeness check.
+- **No workflow framework.** The design borrows the vocabulary of durable execution platforms: an activity implements a step, and a durable timer is `next_at`. It adopts none of them. A separate cluster brings its own datastore, deployment, and recovery story. Reimplementing a subset is an accepted cost.
+- **No replay.** Activities are ordinary code with no determinism rules. The price is the completeness check.
 - **No parallel steps.** One active step per instance is enforced. Fan-out means dropping that index and revisiting the failure path.
 - **No revisits.** Re-execution is a distinct step.
 - **No compensation routing.** A failed step stops the flow. An operator resumes it.
 - **No operator hold.** Nothing suspends one instance. Until that exists, you stop one entity by exhausting its attempts.
 - **No leader election.** Row locks split the dispatch work, and the reaper's delete is idempotent.
 - **No dispatch ceiling.** `dispatch_count` is a signal and not a bound. The usual cause of a failing record transaction is the database, and then writing `FAILED` fails too.
-- **Detective control on routing.** Handler targets are unconstrained. The log and its alert are the control, so the control works only if someone monitors it.
+- **Detective control on routing.** Activity targets are unconstrained. The log and its alert are the control, so the control works only if someone monitors it.
 
 ## Common traps
 
-A handler without a completeness check
+An activity without a completeness check
 
 It double-submits to the external system in the window between work and record. The failure is rare, load-dependent, and costly.
 
@@ -552,7 +552,7 @@ A healthy slow step is re-dispatched into its own lock. Derive the timer from th
 
 Alerting on time in RUNNING
 
-A long handler and a dead process look the same. Alert on an overdue `next_at`.
+A long activity and a dead process look the same. Alert on an overdue `next_at`.
 
 Charging an attempt for contention
 
