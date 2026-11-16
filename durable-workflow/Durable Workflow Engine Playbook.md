@@ -65,14 +65,14 @@ An engine separates the concerns. The activity keeps the business rule. The engi
 
 Principle
 
-An activity is the business rule, a lock, and a completeness check. Retry, timers, serial execution, and transitions belong to the engine.
+An activity performs a business operation and returns an outcome. Retry, timers, serial execution, and transitions belong to the engine.
 
 ## One step run: claim, work, record
 
-A step run uses three transactions in one process. The boundary between them is the design. CLAIM and RECORD are the engine's bookkeeping. WORK belongs to the activity.
+A step run has three phases in one process. CLAIM and RECORD use engine transactions. WORK belongs to the activity, which decides how to perform its business operation.
 
 1. **Claim.** The engine takes a due step row and marks it `RUNNING`. It increments `dispatch_count` and moves the timer forward. The count is now crash-durable.
-2. **Work.** The activity takes its lock and runs a completeness check. If the work is not done, it calls the external system. Then it commits its business writes and its events in its own transaction.
+2. **Work.** The engine invokes the activity. The activity performs its business operation and returns an outcome.
 3. **Record.** The engine writes the outcome, creates the next step row with its input, appends the audit entry, and updates the instance position.
 
 ```steps
@@ -90,11 +90,9 @@ Work: outside the transaction
 - Advancing the timer is part of the claim. Otherwise the row stays due while the activity runs, and every poll picks it up again.
 - Skipping locked rows protects a row only while a transaction holds it. The claim commits before the activity starts, so the timer must carry the protection afterwards.
 
-### Why the activity owns the work transaction
+### Why WORK belongs to the activity
 
-The activity owns locking and serialization. The engine can't wrap that transaction without constraining what it delegated. Events join the activity's open transaction, so they commit with the business change. There is no dual write.
-
-Don't hold a database transaction open across the external call. Call the external system first, then open the transaction that records the result.
+The engine invokes the activity without wrapping it in a business transaction. The activity decides how to perform its operation. Any locking, external calls, business transactions, and emitted events belong to its implementation.
 
 ### Why losing a claim or a record is safe
 
