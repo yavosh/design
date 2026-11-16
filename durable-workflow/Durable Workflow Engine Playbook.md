@@ -108,7 +108,7 @@ Some work must serialize across instances, such as items that share a resource, 
 
 Contract
 
-Every step that calls an external system must start with a completeness check. A lock covers concurrent double submission. Only the completeness check covers sequential double submission, because a crashed attempt releases its lock and the re-drive runs again.
+An activity performs one business operation and returns an outcome. It owns business locking, external calls, transactions, and emitted events. It must tolerate repeated invocation and return a recoverable result. The engine owns scheduling, retry accounting, workflow persistence, and transitions.
 
 ### An activity
 
