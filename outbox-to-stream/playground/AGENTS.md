@@ -1,7 +1,6 @@
 # Prototype Instructions
 
-The user selected option 1, stored at `../design-options/1.png`.
-Preserve its light background, horizontal event pipeline, blue controls, and plain explanations.
+Preserve the light background, horizontal event pipeline, blue controls, and plain explanations.
 Keep the simulation vendor-neutral and separate from live infrastructure.
 Use simple, direct titles. Avoid slogans and promotional language.
 Use generic record examples and event types. Avoid payment-specific terminology.
