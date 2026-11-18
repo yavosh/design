@@ -14,7 +14,7 @@ data=$(mktemp -d)
 draft=$("$run" "$data" draft onboarding designer)
 "$run" "$data" submit "$draft" designer
 "$run" "$data" approve "$draft" reviewer
-instance=$("$run" "$data" start onboarding account example '{"review":true,"import":true}')
+instance=$("$run" "$data" start onboarding account example '{"review":true,"import":true}' --request-key signup-42)
 "$run" "$data" worker 4 &
 worker_pid=$!
 "$run" "$data" status "$instance"
@@ -22,6 +22,9 @@ worker_pid=$!
 ```
 
 Poll `status` until the instance completes. Send `kill -TERM "$worker_pid"` to drain and stop this worker. Use the same directory to resume work.
+
+Reuse the request key after a lost response. An identical start returns the original instance ID, even after you publish a new version.
+Keys are unique across workflows in the same database. Reusing a key with different start arguments fails. Omit the key to start a separate run.
 
 | Command after the data directory | Purpose |
 |---|---|
@@ -41,6 +44,14 @@ A record transaction checks the dispatch number before moving the instance. One 
 The synthetic activities use a separate `activity.db`. Each operation saves its outcome and outbox event together.
 A repeated invocation returns the saved route and payload. Events stay available for a separate delivery service.
 External activities must supply their own locking, destination idempotency, or reconciliation.
+
+Back up and restore both databases from the same point in time. Stop workers and clients before taking both snapshots.
+New runs carry a random ID. If a restored instance encounters another run's saved result, the activity fails.
+When upgrading, stop old workers and run `init` on the existing data directory to add the request-key index.
+Existing runs keep their original event IDs. New events use `<runId>:<step>`.
+
+Workers retry busy claims. If a write lock blocks the result, the worker logs `record_deferred` and the lease schedules recovery.
+Activity errors appear in the audit and worker stderr. Return error messages suitable for both.
 
 The CLI selects a definition by explicit key. Author, reviewer, and operator arguments represent trusted caller identities.
 The library accepts an injected scheduling clock. Publication timestamps, audit entries, and worker leases use the database clock.

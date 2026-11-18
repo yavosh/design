@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS instance (
  CHECK(status<>'FAILED' OR length(coalesce(failure_reason,''))>0),
  FOREIGN KEY(name,version) REFERENCES definition(name,version)
 ) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS start_request_key ON instance(json_extract(selection_inputs,'$.requestKey'))
+ WHERE json_extract(selection_inputs,'$.requestKey') IS NOT NULL;
 CREATE TABLE IF NOT EXISTS execution (
  instance INTEGER NOT NULL REFERENCES instance(id), step TEXT NOT NULL, stage TEXT NOT NULL,
  status TEXT NOT NULL CHECK(status IN ('PENDING','RUNNING','PARKED','COMPLETED','FAILED')),

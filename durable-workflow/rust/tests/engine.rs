@@ -544,3 +544,171 @@ fn activity_rolls_back_business_write_when_event_insert_fails() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn restored_instances_cannot_replay_another_runs_work() -> Result<()> {
+    let mut original = Fixture::new()?;
+    let mut restored = Fixture::new()?;
+    assert_eq!(original.start(&one())?, restored.start(&one())?);
+    let first = claim(&mut original.engine, 100);
+    let second = claim(&mut restored.engine, 100);
+    let activity = Onboarding::init(&original.dir.join("activity.db"))?;
+    let cancel = AtomicBool::new(false);
+    let result = activity.invoke(&first, &cancel)?;
+    assert!(matches!(
+        activity.invoke(&second, &cancel)?,
+        Outcome::Failed { .. }
+    ));
+    assert!(!restored.engine.record(&first, result, 100)?);
+    let other_step = Claim {
+        step: SECOND.into(),
+        ..second.clone()
+    };
+    assert!(matches!(
+        activity.invoke(&other_step, &cancel)?,
+        Outcome::Failed { .. }
+    ));
+    let db = Connection::open(original.dir.join("activity.db"))?;
+    let event: String = db.query_row("SELECT event FROM outbox", [], |r| r.get(0))?;
+    let event: Value = serde_json::from_str(&event)?;
+    let run_id = first.run_id.as_deref().unwrap();
+    assert_eq!(run_id.len(), 32);
+    assert_eq!(event["runId"], run_id);
+    assert_eq!(event["eventId"], format!("{run_id}:{FIRST}"));
+    Ok(())
+}
+
+#[test]
+fn keyed_starts_share_one_instance_and_reject_conflicts() -> Result<()> {
+    let mut f = Fixture::new()?;
+    let version = f.pending(&one())?;
+    f.engine.approve(version, "reviewer", CATALOG)?;
+    let args = [
+        "start",
+        "flow",
+        "account",
+        "abc",
+        r#"{"a":1,"b":2}"#,
+        "--request-key",
+        "submit-1",
+    ];
+    let ids = thread::scope(|scope| {
+        let mut clients = Vec::new();
+        for _ in 0..8 {
+            let dir = &f.dir;
+            clients.push(scope.spawn(move || call(dir, &args)));
+        }
+        clients
+            .into_iter()
+            .map(|client| client.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert!(ids.iter().all(|id| id == &ids[0]));
+    let id = ids[0].as_i64().unwrap();
+    assert_eq!(f.engine.audit(id)?.len(), 1);
+    let next = f.pending(&one())?;
+    f.engine.approve(next, "reviewer", CATALOG)?;
+    let mut replay = args;
+    replay[4] = r#"{"b":2,"a":1}"#;
+    assert_eq!(call(&f.dir, &replay), ids[0]);
+    assert_eq!(f.engine.status(id)?["version"], 1);
+    for (pos, different) in [
+        (1, "other-flow"),
+        (2, "other-kind"),
+        (3, "other-entity"),
+        (4, "null"),
+    ] {
+        let mut conflict = args;
+        conflict[pos] = different;
+        let result = cli(&f.dir, &conflict).output()?;
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("request key"));
+    }
+    assert_ne!(call(&f.dir, &args[..5]), ids[0]);
+    let no_input = [
+        "start",
+        "flow",
+        "account",
+        "abc",
+        "--request-key",
+        "submit-2",
+    ];
+    assert_eq!(call(&f.dir, &no_input), call(&f.dir, &no_input));
+    Ok(())
+}
+
+#[test]
+fn legacy_activity_replay_requires_matching_entity_kind_payload_and_event() -> Result<()> {
+    let mut f = Fixture::new()?;
+    f.start(&one())?;
+    f.sql().execute(
+        "UPDATE instance SET selection_inputs=json_object('key',name)",
+        [],
+    )?;
+    let c = claim(&mut f.engine, 100);
+    assert_eq!(c.run_id, None);
+    let path = f.dir.join("activity.db");
+    let activity = Onboarding::init(&path)?;
+    let cancel = AtomicBool::new(false);
+    activity.invoke(&c, &cancel)?;
+    assert!(matches!(
+        activity.invoke(&c, &cancel)?,
+        Outcome::Done { .. }
+    ));
+    for changed in [
+        Claim {
+            entity: "other".into(),
+            ..c.clone()
+        },
+        Claim {
+            kind: "other".into(),
+            ..c.clone()
+        },
+        Claim {
+            input: Value::Null,
+            ..c.clone()
+        },
+        Claim {
+            run_id: Some("new run".into()),
+            ..c.clone()
+        },
+    ] {
+        assert!(matches!(
+            activity.invoke(&changed, &cancel)?,
+            Outcome::Failed { .. }
+        ));
+    }
+    let db = Connection::open(path)?;
+    let event: String = db.query_row("SELECT event FROM outbox", [], |r| r.get(0))?;
+    let event: Value = serde_json::from_str(&event)?;
+    assert_eq!(event["eventId"], format!("{}:{FIRST}", c.instance));
+    assert!(event.get("runId").is_none());
+    db.execute("DELETE FROM outbox", [])?;
+    assert!(matches!(
+        activity.invoke(&c, &cancel)?,
+        Outcome::Failed { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn activity_defers_after_a_persistent_write_lock() -> Result<()> {
+    let mut f = Fixture::new()?;
+    f.start(&one())?;
+    let c = claim(&mut f.engine, 100);
+    let path = f.dir.join("activity.db");
+    let activity = Onboarding::init(&path)?;
+    let writer = Connection::open(&path)?;
+    writer.execute_batch("BEGIN IMMEDIATE")?;
+    let cancel = AtomicBool::new(false);
+    assert!(matches!(
+        activity.invoke(&c, &cancel)?,
+        Outcome::Defer { .. }
+    ));
+    writer.execute_batch("ROLLBACK")?;
+    assert!(matches!(
+        activity.invoke(&c, &cancel)?,
+        Outcome::Done { .. }
+    ));
+    Ok(())
+}

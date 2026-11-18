@@ -4,6 +4,7 @@ pub const RECOVERY_MARGIN: i64 = 30;
 #[derive(Debug, Clone)]
 pub struct Claim {
     pub instance: i64,
+    pub run_id: Option<String>,
     pub step: String,
     pub dispatch: i64,
     pub max_duration: u32,
@@ -87,7 +88,40 @@ impl Engine {
         input: &Value,
         at: i64,
     ) -> Result<i64> {
+        self.start_with_request_key(name, kind, entity, input, at, None)
+    }
+
+    pub fn start_with_request_key(
+        &mut self,
+        name: &str,
+        kind: &str,
+        entity: &str,
+        input: &Value,
+        at: i64,
+        request_key: Option<&str>,
+    ) -> Result<i64> {
+        if request_key.is_some_and(|key| key.trim().is_empty()) {
+            return Err("request key must not be blank".into());
+        }
         let tx = self.write()?;
+        if let Some(key) = request_key {
+            let previous = tx
+                .query_row(
+                    "SELECT i.id,i.name=?2 AND i.kind=?3 AND i.entity=?4,e.input_data
+                 FROM instance i JOIN definition d ON d.name=i.name AND d.version=i.version
+                 JOIN execution e ON e.instance=i.id AND e.step=json_extract(d.spec,'$.start')
+                 WHERE json_extract(i.selection_inputs,'$.requestKey')=?1",
+                    params![key, name, kind, entity],
+                    |r| Ok((r.get(0)?, r.get::<_, bool>(1)?, r.get::<_, String>(2)?)),
+                )
+                .optional()?;
+            if let Some((id, same_request, original)) = previous {
+                if same_request && serde_json::from_str::<Value>(&original)? == *input {
+                    return Ok(id);
+                }
+                return Err("request key already used with different start parameters".into());
+            }
+        }
         let (version, json): (i64, String) = tx.query_row(
             "SELECT version,spec FROM definition WHERE name=?1 AND valid_until IS NULL",
             [name],
@@ -95,8 +129,9 @@ impl Engine {
         )?;
         let spec: Definition = serde_json::from_str(&json)?;
         let id=tx.query_row("INSERT INTO instance(kind,entity,name,version,selected_by,selection_inputs,status,
-            current_step,started_at,last_progress_at) VALUES(?1,?2,?3,?4,'explicit-key',?5,'ACTIVE',?6,?7,?7) RETURNING id",
-            params![kind,entity,name,version,serde_json::json!({"key":name}).to_string(),spec.start,at],|r|r.get(0))?;
+            current_step,started_at,last_progress_at) VALUES(?1,?2,?3,?4,'explicit-key',
+            json_object('key',?3,'runId',lower(hex(randomblob(16))),'requestKey',?5),'ACTIVE',?6,?7,?7) RETURNING id",
+            params![kind,entity,name,version,request_key,spec.start,at],|r|r.get(0))?;
         enqueue(&tx, id, &spec.start, &spec.steps[&spec.start], input, at)?;
         audit(&tx, id, &spec.start, "engine", "START", None)?;
         tx.commit()?;
@@ -105,7 +140,8 @@ impl Engine {
     pub fn claim(&mut self, stages: &[String], limit: u16, at: i64) -> Result<Vec<Claim>> {
         let tx = self.write()?;
         let mut select = tx.prepare(
-            "SELECT e.instance,e.step,e.dispatch_count,e.max_duration,i.kind,i.entity,e.input_data
+            "SELECT e.instance,e.step,e.dispatch_count,e.max_duration,i.kind,i.entity,e.input_data,
+                    json_extract(i.selection_inputs,'$.runId')
              FROM execution e JOIN instance i ON i.id=e.instance
              WHERE i.status='ACTIVE' AND i.current_step=e.step AND e.next_at<=?1
                AND e.stage IN (SELECT value FROM json_each(?2))
@@ -121,12 +157,13 @@ impl Engine {
                     r.get(4)?,
                     r.get(5)?,
                     r.get::<_, String>(6)?,
+                    r.get(7)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         drop(select);
         let mut claims = Vec::new();
-        for (instance, step, count, max_duration, kind, entity, input) in rows {
+        for (instance, step, count, max_duration, kind, entity, input, run_id) in rows {
             let dispatch = count.checked_add(1).ok_or("dispatch overflow")?;
             let due = at
                 .checked_add(i64::from(max_duration) + RECOVERY_MARGIN)
@@ -135,6 +172,7 @@ impl Engine {
                 params![instance,step,dispatch,due])?;
             claims.push(Claim {
                 instance,
+                run_id,
                 step,
                 dispatch,
                 max_duration,
@@ -153,8 +191,9 @@ impl Engine {
             "SELECT e.attempts,e.max_attempts,d.spec FROM execution e
             JOIN instance i ON i.id=e.instance JOIN definition d ON d.name=i.name AND d.version=i.version
             WHERE e.instance=?1 AND e.step=?2 AND e.status='RUNNING' AND i.status='ACTIVE'
-              AND i.current_step=e.step AND e.dispatch_count=?3",
-            params![c.instance,c.step,c.dispatch],
+              AND i.current_step=e.step AND e.dispatch_count=?3
+              AND json_extract(i.selection_inputs,'$.runId') IS ?4",
+            params![c.instance,c.step,c.dispatch,c.run_id],
             |r| Ok((r.get::<_,u32>(0)?,r.get::<_,u32>(1)?,r.get::<_,String>(2)?)),
         ).optional()?;
         let Some((attempts, limit, json)) = current else {
