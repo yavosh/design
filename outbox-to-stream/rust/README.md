@@ -8,7 +8,7 @@ The projection stores current record status. The jobs consumer creates one webho
 Build the binary and initialize a fresh directory from this crate.
 
 ```sh
-cargo build --locked
+make build
 run=./target/debug/outbox-stream
 data=$(mktemp -d)
 "$run" "$data" init
@@ -62,8 +62,7 @@ Restore that database with its processed keys before redriving external work.
 ## Verify
 
 ```sh
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
+make check
 ```
 
 The CLI integration test kills a webhook worker after receipt and checks the retry against a local HTTP receiver.
