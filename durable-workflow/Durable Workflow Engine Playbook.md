@@ -73,7 +73,7 @@ A step run has three phases in one process. CLAIM and RECORD use engine transact
 
 1. **Claim.** The engine takes a due step row and marks it `RUNNING`. It increments `dispatch_count` and moves the timer forward. The count is now crash-durable.
 2. **Work.** The engine invokes the activity. The activity performs its business operation and returns an outcome.
-3. **Record.** Match the running step and its claimed dispatch number. Discard stale results. Commit the outcome, successor input, audit entry, and instance position together.
+3. **Record.** Match the run ID, running step, and claimed dispatch number. Discard stale results. Commit the outcome, successor input, audit entry, and instance position together.
 
 ```steps
 Claim: one short database transaction
@@ -96,7 +96,7 @@ The engine invokes the activity without wrapping it in a business transaction. T
 
 ### Why losing a claim or a record is safe
 
-A lost record leaves the step eligible for recovery when its timer expires. After a business commit, a repeat invocation must recover the original route and payload.
+A lost record leaves the step eligible for recovery when its timer expires. Give each workflow run an ID that remains unique across restores. Before returning a saved route and payload, verify that the result belongs to this run, step, and input. Stop on a mismatch.
 
 ### Two levels of serialization
 
@@ -201,7 +201,7 @@ A timeout consumes an attempt and behaves like a thrown error. `last_error` dist
 
 ## Instances: one flow over one entity
 
-- **Start.** The definition declares its start step. Creating an instance creates the instance row and the first step row in one transaction.
+- **Start.** Create the instance and its first step in one transaction. For retryable starts, save the caller's request key in that transaction. After a lost response, the same key and arguments return the original instance ID. Reject the same key with different arguments.
 - **Completion.** A `Done` on a declared terminal step completes the instance.
 - **Failure.** A step that reaches `FAILED` fails the instance. In the same transaction, the engine terminates the instance's remaining non-terminal step row. Otherwise that row keeps its timer and is re-driven forever.
 - **Guard.** The dispatcher skips any instance that isn't `ACTIVE`.
@@ -227,7 +227,7 @@ The audit log is different. The database clock stamps its entries, so a skewed n
 
 ## Worker groups and concurrency
 
-A worker group claims a batch and runs those steps in parallel up to a configured limit. One instance stays strictly serial within itself.
+A worker group claims a batch and runs those steps in parallel up to a configured limit. Tune the limit with a fixed workload. If more slots increase deferrals without increasing completions per second, reduce the limit.
 
 By default, a process hosts every stage. A deployment can restrict a group to specific stages, and the dispatcher then filters its claim to those stages. Two reasons make that worthwhile:
 
@@ -467,16 +467,19 @@ The log is append-only. Each entry records the step, the status change, the outc
 | --- | --- | --- |
 | Process dies before the claim commits | The row stays due. The next poll takes it. | Nothing to see. |
 | Process dies mid-activity | The row stays `RUNNING` with the claim's timer. It re-drives when due, and the completeness check absorbs the repeat. | A gap in the log's dispatch numbers. `dispatch_count` climbs. |
-| Record transaction is lost | The row re-drives. The completeness check returns `Done` and the transition resolves again. | A gap in the log's dispatch numbers. |
+| Record transaction is lost | The timer dispatches the step again. If the business operation committed, the activity returns its saved result. | A gap in the log's dispatch numbers. |
 | External system fails transiently | `Retry` with backoff. The step fails when the budget is exhausted. | `attempts` on the row. Failed-instance alert at exhaustion. |
-| The lock is busy | `Defer`. No attempt is charged. | `defer_count` climbs. |
+| An activity lock is busy | Return `Defer` without charging an attempt. | `defer_count` climbs. |
+| A temporary engine lock blocks a write | Keep the worker polling. Retry a blocked claim. If recording fails, let the claim timer recover the step. | Worker logs identify the blocked claim or record. |
 | Activity exceeds its maximum duration | The engine cancels the activity. The timeout consumes an attempt. | Timeouts by step. `last_error` names the timeout. |
 | Activity ignores cancellation | The host process terminates. The database releases the lock and the step re-drives on another node. | A worker lease that expires without a deregistration. |
 | No worker hosts a stage | Rows sit in `PENDING` with a due timer. | Unhosted-stage alert within a lease period. Overdue `next_at`. |
 | A transition fires twice | The database rejects the second active step row. | A constraint violation in the logs. |
-| A step fails | The instance fails and its remaining step row terminates. An operator retry resumes the flow. | Failed-instance alert. |
+| A step fails | The instance fails and its remaining step row terminates. An operator retry resumes the flow. | The failed-instance alert identifies the run. Record a sanitized cause in the audit and worker log with the step and dispatch number. |
 | Event delivery is down | Events wait, already committed with the step's work. Steps keep running. | Age of the oldest undelivered event. |
 | An `ACTIVE` instance stops moving | No step timer catches it. | `last_progress_at` passes the stall threshold. |
+
+Restore workflow and activity data to a consistent recovery point. In a restore drill, check that completed steps match business effects for the same run and entity. Reconcile external effects before resuming workers.
 
 ## What to measure
 
