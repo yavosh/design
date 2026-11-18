@@ -225,6 +225,10 @@ An event that describes a unique fact gets an id derived from that fact. For exa
 
 Choose keys carefully. Two genuinely different facts must never share one, or a consumer will drop the second.
 
+Document the identity rule for each event type. When the id is derived from envelope fields, validate it before deduplication.
+For example, a revision 2 event carrying revision 1's id must enter failure handling. Acknowledging it as a duplicate loses the update.
+Scope processed keys by source when producers assign ids independently.
+
 ### Versioning
 
 Change payloads additively. Add fields, never rename or repurpose them, and have every consumer ignore fields it doesn't know. When a consumer needs a field that older events lack, it checks `schemaVersion` and handles the old shape explicitly. A minimum-version check only helps if the minimum reflects supported versions.
@@ -253,6 +257,10 @@ A service started with the wrong environment name publishes to, and reads from, 
 
 Order is best-effort first-in, first-out per stream. A row waiting for a retry can be overtaken by newer rows, including events for the same business entity. Use this design only when consumers tolerate that reordering.
 
+For events carrying complete projection state, update the stored values only when the incoming revision is newer.
+Test deliveries in the order 2, 1, 2. The projection must retain revision 2 and its values.
+For incremental changes that depend on earlier revisions, recover missing changes before applying dependent ones.
+
 If an event type needs strict order per aggregate, this relay won't provide it. One in-flight row per aggregate is insufficient: newer rows can still overtake older rows awaiting retry.
 
 An ordered extension needs a stable per-aggregate sequence. Older unresolved events must block newer events for that aggregate, including during backoff. The extension must also prevent stale publishers from breaking order and preserve order during consumer processing. These requirements apply only to that extension. The base design continues to allow reordering.
@@ -265,7 +273,8 @@ An entry is acknowledged only after the handler returns. A failed entry stays un
 
 - Each consuming service has one consumer group per stream it reads. Groups are independent: each keeps its own position and its own list of unacknowledged entries. Adding a group never affects the others.
 - Each instance is a named consumer inside the group. Use a distinct instance identifier. A restarted instance can recover pending entries if it retains that identifier.
-- Configure a new group to start at the oldest retained entry. Its first deployment can replay a full retention window, such as 7 days. Make sure the handler is idempotent and handles old events before deployment.
+- Start history consumers at the oldest retained entry. Their handlers must support every version within the replay window.
+- Bootstrap a current-state projection from the producer when records can predate retained history. Capture the stream position before reading a consistent producer snapshot. Commit the projection before advancing its cursor. Consume subsequent entries with the same revision guard. Repeat the snapshot if retention overtakes the captured position. Historical side effects require separate reconciliation.
 - Ensure the stream exists before consumption. Use the broker's stream and group initialization operations.
 
 ### Three loops per consumer
@@ -280,7 +289,14 @@ The loops share one permit per instance, so a consumer handles one entry at a ti
 
 ### Failures and dead letters
 
-If the handler fails, the entry stays unacknowledged and its retry counter increases. Persist the counter by stream, group, and entry id, using broker metadata or a durable retry store. Retain retry state for at least the recovery window. For example, on the sixth failure, copy the entry to the dead-letter stream before acknowledging it. Handle duplicate dead letters safely. An entry that can't be parsed takes the same path.
+If the handler fails, keep the entry unacknowledged. Count recorded handler failures by stream, group, and entry id.
+Some brokers count a delivery when another consumer claims the entry, even if the handler never ran.
+Retain failure counts for at least the recovery window. On the sixth failure, for example, persist the dead letter before acknowledging.
+Store the original bytes, stream, group, and entry id. Handle duplicate dead letters safely. An entry that cannot be parsed follows the same path.
+
+After resolving the failure, redrive the stored bytes only to the group that failed.
+Appending them to the shared stream sends the entry to healthy groups again.
+If the stored event has an invalid identity, reconcile it against the producer's committed fact before attempting recovery.
 
 ### Idempotency is the contract
 
@@ -356,6 +372,7 @@ Set explicit outage and replay bounds for each consumer group. Recovery must rep
 | Consumer |  |
 | `stream.messages.processed`, `failed` | Counters by stream and group. |
 | `stream.consume.lag` | Now minus the entry's broker timestamp. |
+| Unread entries and oldest unread age | Measure each group's backlog independently of its consumer. A stopped consumer emits no fresh latency samples. |
 | `stream.messages.dlq` | Entries moved to a dead-letter stream. |
 | Broker |  |
 | `stream.length`, `memory`, `first_entry.age` | Per stream and per dead-letter stream. |
