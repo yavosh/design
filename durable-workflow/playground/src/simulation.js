@@ -291,11 +291,11 @@ function work(state, { fail, target, reason } = {}) {
   if (found) {
     return {
       active: "activity", found,
-      title: "The completeness check absorbs the repeat",
-      explanation: `The activity takes its lock and checks the external system. The work is already done: ${effect}. It makes no second call and returns ${returned}.`,
-      summary: "The completeness check found the work already done, so the activity made no second call.",
+      title: "The activity skips the repeated external operation",
+      explanation: `The activity confirms the external result: ${effect}. If the local result is missing, it commits the result and the ${event} event together. It returns ${returned}.`,
+      summary: "The activity confirmed the external effect and checked that the local result and event had committed.",
       lesson: "A lock stops concurrent double submission. Only the completeness check stops a sequential one.",
-      message: `Completeness check found the work done. No second external call. Outcome: ${returned}.`,
+      message: `External effect confirmed. Local result and event committed. Outcome: ${returned}.`,
     };
   }
   const declared = !target || (definition.steps[row.step].alternates ?? []).includes(target);
@@ -371,7 +371,7 @@ function record(state) {
       explanation: `The row returns to PENDING. defer_count is ${row.deferCount}, attempts stays ${row.attempts}, and next_at is virtual ${formatTime(row.nextAt)}.`,
       summary: `The engine raised defer_count to ${row.deferCount}, charged no attempt, and set next_at to virtual ${formatTime(row.nextAt)}.`,
       shortTitle: "Defer. No attempt is charged.",
-      lesson: "A climbing defer_count means the step keeps waiting. A climbing dispatch_count means it keeps dying.",
+      lesson: "defer_count counts deferrals. dispatch_count counts every claim. Gaps in the audit log's dispatch numbers can indicate an interrupted run.",
       message: `Defer recorded. defer_count ${row.deferCount}; attempts ${row.attempts}; next_at ${formatTime(row.nextAt)}.`,
     };
   }

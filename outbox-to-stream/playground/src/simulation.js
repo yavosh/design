@@ -126,7 +126,7 @@ export function advance(previous) {
       if (action === "commitWithoutWakeup") {
         state.title = "The wakeup is missed. The event remains.";
         state.explanation = "The transaction commits, but the relay misses its notification. The notification is only a hint. The committed outbox row is still available.";
-        state.lesson = "Delivery jobs improve latency. Durable rows and fallback scans preserve recovery.";
+        state.lesson = "A notification wakes the relay after commit. If the relay misses it, the next fallback scan finds the row.";
         message = "Transaction committed. Wakeup missed; durable outbox row preserved.";
         kind = "warning";
       }

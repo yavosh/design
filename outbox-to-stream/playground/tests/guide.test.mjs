@@ -18,6 +18,16 @@ test("the playbook renders its sections, tables, code, and callouts", () => {
   assert.ok(!html.includes('href="#why"'), "The old contents links must not survive conversion");
 });
 
+test("the outbox playbook's Markdown contents link to its section headings", () => {
+  const markdown = readFileSync(new URL("../../Outbox-to-Stream Playbook.md", import.meta.url), "utf8");
+  const contents = markdown.slice(0, markdown.indexOf("# "));
+  const targets = [...contents.matchAll(/\]\(#([^)]+)\)/g)].map(match => match[1]);
+  const headings = [...markdown.matchAll(/^## (.+)$/gm)].map(([, heading]) =>
+    heading.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").replaceAll(" ", "-")
+  );
+  assert.deepEqual(targets, headings);
+});
+
 test("the workflow playbook renders its sections, tables, code, and callouts", () => {
   const markdown = readFileSync(new URL("../../../durable-workflow/Durable Workflow Engine Playbook.md", import.meta.url), "utf8");
   const { html, toc, title } = renderGuide(markdown);

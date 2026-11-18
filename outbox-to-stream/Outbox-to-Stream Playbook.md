@@ -1,21 +1,21 @@
 Contents
 
-- [Why an outbox](#why)
-- [The pipeline](#pipeline)
-- [Producer](#producer)
-- [Relay](#relay)
-- [Envelope](#envelope)
-- [Streams](#streams)
-- [Consumers](#consumers)
-- [Retention](#retention)
-- [Failure modes](#failures)
-- [Observability](#observe)
-- [Adopting it](#adopt)
+- [Why an outbox](#why-the-event-lives-in-the-database-first)
+- [The pipeline](#the-pipeline-end-to-end)
+- [Producer](#producer-writing-the-outbox-row)
+- [Relay](#relay-from-table-to-stream)
+- [Envelope](#envelope-the-shape-of-every-event)
+- [Streams](#streams-and-naming)
+- [Consumers](#consumers-apply-once-acknowledge-after)
+- [Retention](#retention-and-housekeeping)
+- [Failure modes](#what-happens-when-something-fails)
+- [Observability](#what-to-measure)
+- [Adopting it](#adopting-it-in-your-project)
 - [Traps](#common-traps)
 
 # Outbox-to-Stream Playbook
 
-This note explains how services share facts through a transactional outbox and a durable stream broker. Each change commits together with its event. A relay copies the event to a stream. Every interested service applies the event once in its own database, even when the stream delivers it twice.
+Each service commits a business change and its event in one database transaction. A relay copies the event from the outbox to a durable stream. Consumer groups can recover missed events while the stream or outbox retains them. Each consumer can suppress duplicates while its database retains a record of the events it applied.
 
 The examples use language-neutral pseudocode and data structures. Adapt transaction, locking, and broker operations to your platform. Timings, batch sizes, and retry limits are example settings.
 
@@ -89,7 +89,7 @@ Build and serialize the complete envelope at publish time, store it in the row, 
 - The timestamp would become the relay's clock instead of the moment of the change.
 - The request id that ties the event to the original request would be lost.
 
-### The table
+### Outbox table schema
 
 | Field | Meaning |
 | --- | --- |

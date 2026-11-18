@@ -179,8 +179,8 @@ export function App() {
       <span className="footnote">Example settings · Virtual time · Events never move the flow</span>
     </footer>
     <dialog ref={failureDialog} aria-labelledby="failure-title" className="scenario-dialog" onClick={event => { if (event.target === event.currentTarget) failureDialog.current.close(); }}>
-      <div className="dialog-heading"><div><span className="eyebrow">LEARN BY EXPERIMENTING</span><h2 id="failure-title">What could go wrong?</h2></div><button aria-label="Close scenarios" className="icon-button" onClick={() => failureDialog.current.close()}><IconX /></button></div>
-      <p className="dialog-description">Choose a scenario. Each experiment starts fresh and explains its recovery.</p>
+      <div className="dialog-heading"><h2 id="failure-title">Choose a failure scenario</h2><button aria-label="Close scenarios" className="icon-button" onClick={() => failureDialog.current.close()}><IconX /></button></div>
+      <p className="dialog-description">Choosing a scenario resets the simulation.</p>
       <div className="scenario-options">{Object.entries(scenarios).filter(([, item]) => item.failure).map(([key, item]) => <button key={key} onClick={() => selectScenario(key)}><span><strong>{item.name}</strong><span>{item.description}</span></span><IconArrowRight size={20} /></button>)}</div>
     </dialog>
     <dialog ref={inspectorDialog} aria-labelledby="inspector-title" className="inspector-dialog" onClick={event => { if (event.target === event.currentTarget) inspectorDialog.current.close(); }}>
