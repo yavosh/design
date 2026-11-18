@@ -1,0 +1,17 @@
+{
+  "start": "SIGNUP/NORMALISE",
+  "terminals": ["WELCOME/SEND"],
+  "steps": {
+    "SIGNUP/NORMALISE":       { "next": "PROFILE/ENRICH" },
+    "PROFILE/ENRICH":         { "next": "VERIFICATION/VERIFY", "alternates": ["SCHEDULE/PARK"] },
+    "SCHEDULE/PARK":          { "next": "VERIFICATION/VERIFY" },
+    "VERIFICATION/VERIFY":    { "next": "WORKSPACE/RESERVE_NAME" },
+    "WORKSPACE/RESERVE_NAME": { "next": "WORKSPACE/CREATE", "alternates": ["REVIEW/REQUEST"] },
+    "REVIEW/REQUEST":         { "next": "WORKSPACE/ADJUST" },
+    "WORKSPACE/ADJUST":       { "next": "WORKSPACE/CREATE" },
+    "WORKSPACE/CREATE":       { "next": "WORKSPACE/RELEASE_NAME", "alternates": ["WORKSPACE/IMPORT_DATA"] },
+    "WORKSPACE/IMPORT_DATA":  { "next": "WORKSPACE/RELEASE_NAME" },
+    "WORKSPACE/RELEASE_NAME": { "next": "WELCOME/SEND" },
+    "WELCOME/SEND":           { "next": null }
+  }
+}

@@ -73,7 +73,7 @@ A step run has three phases in one process. CLAIM and RECORD use engine transact
 
 1. **Claim.** The engine takes a due step row and marks it `RUNNING`. It increments `dispatch_count` and moves the timer forward. The count is now crash-durable.
 2. **Work.** The engine invokes the activity. The activity performs its business operation and returns an outcome.
-3. **Record.** The engine writes the outcome, creates the next step row with its input, appends the audit entry, and updates the instance position.
+3. **Record.** Match the running step and its claimed dispatch number. Discard stale results. Commit the outcome, successor input, audit entry, and instance position together.
 
 ```steps
 Claim: one short database transaction
@@ -96,7 +96,7 @@ The engine invokes the activity without wrapping it in a business transaction. T
 
 ### Why losing a claim or a record is safe
 
-Both are engine bookkeeping. A lost write leaves the step row non-terminal with a timer. The dispatcher re-drives the row, the completeness check returns `Done`, and the transition resolves again. Correctness never depends on the engine's own writes committing.
+A lost record leaves the step eligible for recovery when its timer expires. After a business commit, a repeat invocation must recover the original route and payload.
 
 ### Two levels of serialization
 
@@ -256,7 +256,7 @@ A process registers itself at startup with the stages it can run, then renews a 
 A process that only delivers events registers too, with no stages and a delivery flag. The same table then answers "is anything delivering events".
 
 ```text
-Collect the distinct stages named by every current definition.
+Collect stages from current definitions and versions pinned by active instances.
 Collect the distinct stages hosted by every worker whose lease has not expired.
 Report each required stage that no live worker hosts.
 ```
@@ -367,7 +367,7 @@ Run the publish in one transaction:
 2. Reject the publish if the draft's base version doesn't match the current version. The draft is stale.
 3. Reject the publish if any row for the key overlaps the new validity period.
 4. Close the current row by setting `valid_until` to the current time.
-5. Insert the new version with `valid_from` set to the same time. There is no gap and no overlap.
+5. Open the new version at the same boundary. Require that boundary to be later than the previous version's start.
 6. Mark the draft approved, with the published version and the approver.
 
 Validate at publish time and not at execution time. A bad edit must fail for the editing user, not in production against a live entity. The gate checks three things:
