@@ -116,16 +116,16 @@ An activity performs one business operation and returns an outcome. It owns busi
 Acquire the lock
   Try to take the lock for the reserved workspace name.
   If the lock is busy, return Defer for 30 seconds.
-Check completeness
+Check the external reservation
   Read the reservation from the external system.
-  If the reservation is already released, return Done.
+  If the reservation is already released, continue with the local transaction.
 Release the reservation
   Ask the external system to release the reservation.
   If the failure is transient, return Retry for 1 minute.
   If the external system rejects the request, return Failed with the reason.
 Commit the result
   Begin a database transaction.
-  Record the release and emit the NameReleased event.
+  If this step has no local release record, insert the record and its NameReleased event together.
   Commit the transaction.
   Return Done.
 ```
@@ -530,7 +530,7 @@ That choice moves a risk instead of removing it. The dispatcher doesn't run insi
 
 ### Onboard one step at a time
 
-- Onboard the lowest blast radius first. A good first step fixes a known defect, such as a release that never retries.
+- Start with the step whose failure affects the fewest users or systems. A good first step fixes a known defect, such as a release that never retries.
 - Fold each stage's existing retry timer into the engine and preserve its behavior.
 - Split bundled operations into separate steps, so each one retries on its own.
 - Remodel any flow that resumes at a completed stage before you onboard it.

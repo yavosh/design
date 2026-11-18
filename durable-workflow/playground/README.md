@@ -26,7 +26,10 @@ The playground includes eleven scenarios:
 
 ## Run locally
 
+Run these commands from the repository root.
+
 ```sh
+cd durable-workflow/playground
 npm ci
 npm run dev -- --host 127.0.0.1 --port 4174
 ```

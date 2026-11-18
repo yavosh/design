@@ -17,7 +17,10 @@ The playground includes six scenarios:
 
 ## Run locally
 
+Run these commands from the repository root.
+
 ```sh
+cd outbox-to-stream/playground
 npm ci
 npm run dev -- --host 127.0.0.1 --port 4173
 ```
