@@ -1,0 +1,4 @@
+Projection Projection.cfg pass bounded projection state
+Projection ProjectionUnguarded.cfg fail negative control without revision guard
+ProjectionTraces ProjectionTraces.cfg pass SQLite crash/reorder/bootstrap trace
+lean lean/Projection pass unbounded revision arithmetic and event histories

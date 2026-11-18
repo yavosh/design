@@ -1,0 +1,8 @@
+[
+  {"action":"init","input":0,"revision":0,"seen":[]},
+  {"action":"apply","input":2,"revision":2,"seen":[2]},
+  {"action":"apply","input":1,"revision":2,"seen":[1,2]},
+  {"action":"apply","input":2,"revision":2,"seen":[1,2]},
+  {"action":"snapshot","input":3,"revision":3,"seen":[1,2]},
+  {"action":"apply","input":3,"revision":3,"seen":[3,1,2]}
+]

@@ -1,0 +1,5 @@
+name = "projection"
+defaultTargets = ["Projection"]
+
+[[lean_lib]]
+name = "Projection"
