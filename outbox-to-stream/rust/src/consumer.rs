@@ -19,17 +19,12 @@ pub struct Consumer {
     group: Group,
 }
 
-const UPSERT: &str = "INSERT INTO projection VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,status=excluded.status WHERE excluded.revision>projection.revision";
+const UPSERT: &str = "INSERT INTO projection VALUES(?1,?2,?3)
+    ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, status=excluded.status
+    WHERE excluded.revision>projection.revision";
 impl Consumer {
     pub fn open(dir: &Path, group: Group) -> Result<Self> {
-        let db = database(
-            &dir.join(format!("{}.db", group.name())),
-            "CREATE TABLE IF NOT EXISTS seen(source TEXT,event TEXT,PRIMARY KEY(source,event)) STRICT;",
-        )?;
-        db.execute_batch(match group{
-            Group::Projection=>"CREATE TABLE IF NOT EXISTS projection(id TEXT PRIMARY KEY, revision INTEGER NOT NULL,status TEXT NOT NULL) STRICT;",
-            Group::Jobs=>"CREATE TABLE IF NOT EXISTS jobs(source TEXT NOT NULL,event TEXT NOT NULL,bytes BLOB NOT NULL,PRIMARY KEY(source,event)) STRICT;"
-        })?;
+        let db = database(&dir.join(format!("{}.db", group.name())))?;
         Ok(Self { db, group })
     }
     pub fn apply(&mut self, bytes: &[u8]) -> Result<()> {
@@ -47,7 +42,7 @@ impl Consumer {
             || event.source != "records"
             || event.environment != "local"
             || event.payload.revision < 1
-            || event.event_id.is_empty()
+            || event.event_id != record_event_id(&event.payload.record_id, event.payload.revision)
         {
             return Err("unsupported event".into());
         }
@@ -72,7 +67,7 @@ impl Consumer {
                 }
                 Group::Jobs => {
                     tx.execute(
-                        "INSERT INTO jobs VALUES(?1,?2,?3)",
+                        "INSERT INTO jobs(source,event,bytes) VALUES(?1,?2,?3)",
                         params![event.source, event.event_id, bytes],
                     )?;
                 }
@@ -121,7 +116,11 @@ impl Consumer {
             )?;
         }
         tx.commit()?;
-        stream.0.execute("INSERT INTO groups VALUES(?1,?2) ON CONFLICT(name) DO UPDATE SET cursor=max(cursor,excluded.cursor)",params![self.group.name(),watermark])?;
+        stream.0.execute(
+            "INSERT INTO groups VALUES(?1,?2)
+             ON CONFLICT(name) DO UPDATE SET cursor=max(cursor,excluded.cursor)",
+            params![self.group.name(), watermark],
+        )?;
         Ok(())
     }
 }

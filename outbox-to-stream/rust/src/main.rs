@@ -1,7 +1,7 @@
 use outbox_stream::{Consumer, Group, Producer, Result, Stream, clock, init};
 use std::{path::Path, thread::sleep, time::Duration};
 
-const USAGE: &str = "usage: outbox-stream DIR init | update ID STATUS REQUEST | relay | consume projection|jobs INSTANCE | bootstrap | replay EVENT | redrive GROUP ENTRY | maintain | status";
+const USAGE: &str = "usage: outbox-stream DIR init | update ID STATUS REQUEST | relay | consume projection|jobs INSTANCE | worker URL | bootstrap | replay EVENT | redrive GROUP ENTRY | resume-reconciled GROUP TRIMMED_THROUGH | maintain | status";
 
 fn group(name: &str) -> Result<Group> {
     Group::ALL
@@ -38,10 +38,22 @@ fn main() -> Result<()> {
             let g = group(name)?;
             let mut consumer = Consumer::open(dir, g)?;
             let mut stream = Stream::open(dir)?;
-            stream.enroll(g)?;
+            if g == Group::Projection && !stream.enrolled(g)? {
+                consumer.bootstrap(&mut Producer::open(dir)?, &mut stream)?;
+            } else {
+                stream.enroll(g)?;
+            }
             loop {
                 if consumer.tick(&mut stream, instance, clock())? == 0 {
                     sleep(Duration::from_millis(200))
+                }
+            }
+        }
+        ["worker", url] => {
+            let worker = outbox_stream::Worker::open(dir, url)?;
+            loop {
+                if !worker.tick(clock())? {
+                    sleep(Duration::from_secs(1));
                 }
             }
         }
@@ -55,6 +67,11 @@ fn main() -> Result<()> {
         ["redrive", name, id] => {
             if !Stream::open(dir)?.redrive(group(name)?, id.parse()?, clock())? {
                 return Err("no retained dead letter".into());
+            }
+        }
+        ["resume-reconciled", name, floor] => {
+            if !Stream::open(dir)?.resume_reconciled(group(name)?, floor.parse()?)? {
+                return Err("group has no gap at the supplied retention boundary".into());
             }
         }
         ["maintain"] => {

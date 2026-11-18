@@ -7,3 +7,8 @@ import Projection
 #print axioms agreement
 #print axioms unguarded_regresses
 #print axioms observed
+#print axioms canonical_agreement
+#print axioms accepted_covers
+#print axioms before_silently_drops
+#print axioms exact_revision
+#print axioms exact_history

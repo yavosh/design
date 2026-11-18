@@ -153,8 +153,18 @@ fn six_handler_failures_move_entry_to_durable_dead_letters() -> Result<()> {
         );
     }
     assert_eq!(f.count("stream", "SELECT count(*) FROM pending"), 0);
-    assert!(s.redrive(g, id, now)?);
+    // The dead letter is newer than the original stream entry.
+    let trim_at = now + RETENTION + 1;
+    assert_eq!(s.trim(trim_at)?, 1);
+    assert!(s.redrive(g, id, trim_at)?);
     assert!(!s.redrive(g, id, now)?);
+    assert_eq!(
+        f.count("stream", "SELECT count(*) FROM entries"),
+        0,
+        "redrive leaked into other groups"
+    );
+    let retry = s.take(g, "operator", trim_at, true)?.unwrap();
+    assert_eq!(retry.bytes, b"invalid");
     Ok(())
 }
 
@@ -198,6 +208,11 @@ fn projection_trace_matches_proof_fixture() -> Result<()> {
         c.apply(&payload(i))?;
         trace.push(observe("apply", i)?);
     }
+    assert_eq!(
+        f.count("projection", "SELECT revision FROM projection"),
+        2,
+        "late event restored an older revision"
+    );
     drop(c);
     let mut c = Consumer::open(&f.0, Group::Projection)?;
     p.update("a", "v3", "r", None)?;
@@ -210,6 +225,199 @@ fn projection_trace_matches_proof_fixture() -> Result<()> {
     assert_eq!(
         serde_json::Value::Array(trace),
         serde_json::from_str::<serde_json::Value>(&expected)?
+    );
+    Ok(())
+}
+
+#[test]
+fn conflicting_event_identity_never_acknowledges_a_lost_update() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let mut producer = Producer::open(&fixture.0)?;
+    let mut consumer = Consumer::open(&fixture.0, Group::Projection)?;
+    producer.update("a", "open", "r1", None)?;
+    producer.update("a", "closed", "r2", None)?;
+    let mut claims = producer.claim(clock() + 1, 2)?;
+    claims.sort_by_key(|c| c.id);
+    consumer.apply(&claims[0].bytes)?;
+    let mut event: Event = serde_json::from_slice(&claims[1].bytes)?;
+    event.event_id = serde_json::from_slice::<Event>(&claims[0].bytes)?.event_id;
+    assert!(
+        consumer.apply(&serde_json::to_vec(&event)?).is_err(),
+        "accepted revision 2 under revision 1's identity"
+    );
+    consumer.apply(&claims[1].bytes)?;
+    assert_eq!(
+        fixture.count("projection", "SELECT revision FROM projection"),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn ambiguous_destination_response_retries_same_key_and_bytes() -> Result<()> {
+    let f = Fixture::new()?;
+    let mut p = Producer::open(&f.0)?;
+    p.update("a", "open", "r", None)?;
+    let bytes = p.claim(clock() + 1, 1)?.pop().unwrap().bytes;
+    let mut jobs = Consumer::open(&f.0, Group::Jobs)?;
+    jobs.apply(&bytes)?;
+    let worker = Worker::open(&f.0, "https://example.invalid")?;
+    let mut first = String::new();
+    assert!(worker.deliver_with(100, |key, body| {
+        first = key.into();
+        assert_eq!(body, bytes);
+        Err("lost response".into())
+    })?);
+    assert!(!worker.deliver_with(129, |_, _| unreachable!())?);
+    assert!(worker.deliver_with(130, |key, body| {
+        assert_eq!(key, first);
+        assert_eq!(body, bytes);
+        Ok(true)
+    })?);
+    jobs.apply(&bytes)?;
+    assert!(!worker.deliver_with(200, |_, _| unreachable!())?);
+    assert_eq!(
+        f.count("jobs", "SELECT attempts FROM jobs WHERE state='DONE'"),
+        2
+    );
+    assert!(Worker::open(&f.0, "https://elsewhere.invalid").is_err());
+    Ok(())
+}
+
+#[test]
+fn competing_relay_connections_claim_disjoint_rows() -> Result<()> {
+    let f = Fixture::new()?;
+    let mut producer = Producer::open(&f.0)?;
+    for _ in 0..20 {
+        producer.update("a", "open", "req", None)?;
+    }
+    let barrier = std::sync::Barrier::new(2);
+    let now = clock() + 1;
+    let ids = std::thread::scope(|scope| {
+        let claim = || {
+            let mut replica = Producer::open(&f.0).unwrap();
+            barrier.wait();
+            replica
+                .claim(now, 10)
+                .unwrap()
+                .into_iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>()
+        };
+        let left = scope.spawn(claim);
+        let right = scope.spawn(claim);
+        [left.join().unwrap(), right.join().unwrap()]
+    });
+    assert!(ids.iter().all(|rows| rows.len() == 10));
+    assert_eq!(
+        ids.into_iter()
+            .flatten()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        20
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_projection_transaction_keeps_entry_retriable() -> Result<()> {
+    let f = Fixture::new()?;
+    let mut producer = Producer::open(&f.0)?;
+    let mut stream = Stream::open(&f.0)?;
+    producer.update("a", "open", "r", None)?;
+    producer.drain(&stream)?;
+    let mut consumer = Consumer::open(&f.0, Group::Projection)?;
+    stream.enroll(Group::Projection)?;
+    let db = f.db("projection");
+    db.execute_batch("CREATE TRIGGER reject BEFORE INSERT ON projection BEGIN SELECT raise(ABORT,'injected'); END;")?;
+    let now = clock();
+    consumer.tick(&mut stream, "one", now)?;
+    assert_eq!(f.count("projection", "SELECT count(*) FROM seen"), 0);
+    assert_eq!(f.count("stream", "SELECT failures FROM pending"), 1);
+    db.execute_batch("DROP TRIGGER reject")?;
+    consumer.tick(&mut stream, "two", now + 30)?;
+    assert_eq!(f.count("projection", "SELECT revision FROM projection"), 1);
+    assert_eq!(f.count("stream", "SELECT count(*) FROM pending"), 0);
+    Ok(())
+}
+
+#[test]
+fn reconciliation_requires_current_floor_and_preserves_retained_entries() -> Result<()> {
+    let f = Fixture::new()?;
+    let mut stream = Stream::open(&f.0)?;
+    let g = Group::Jobs;
+    stream.enroll(g)?;
+    let now = clock();
+    let expired = stream.append(STREAM, b"old", now - RETENTION - 1)?;
+    let retained = stream.append(STREAM, b"retained", now)?;
+    stream.trim(now)?;
+    assert!(stream.take(g, "one", now, false).is_err());
+    assert!(!stream.resume_reconciled(g, retained)?);
+    assert!(stream.resume_reconciled(g, expired)?);
+    assert_eq!(
+        stream.take(g, "one", now, false)?.unwrap().bytes,
+        b"retained"
+    );
+    Ok(())
+}
+
+#[test]
+fn unsupported_subscribed_version_stays_pending_and_unrelated_type_advances() -> Result<()> {
+    let f = Fixture::new()?;
+    let mut producer = Producer::open(&f.0)?;
+    producer.update("a", "open", "r", None)?;
+    let mut event: Event =
+        serde_json::from_slice(&producer.claim(clock() + 1, 1)?.pop().unwrap().bytes)?;
+    event.schema_version = 2;
+    let mut stream = Stream::open(&f.0)?;
+    let g = Group::Jobs;
+    let now = clock();
+    stream.enroll(g)?;
+    stream.append(STREAM, &serde_json::to_vec(&event)?, now)?;
+    stream.append(STREAM, br#"{"type":"Unrelated"}"#, now)?;
+    let mut consumer = Consumer::open(&f.0, g)?;
+    consumer.tick(&mut stream, "one", now)?;
+    consumer.tick(&mut stream, "one", now)?;
+    assert_eq!(f.count("stream", "SELECT failures FROM pending"), 1);
+    assert_eq!(f.count("stream", "SELECT cursor FROM groups"), 2);
+    assert_eq!(f.count("jobs", "SELECT count(*) FROM jobs"), 0);
+    Ok(())
+}
+
+#[test]
+fn identity_trace_matches_proof_fixture() -> Result<()> {
+    let f = Fixture::new()?;
+    let mut p = Producer::open(&f.0)?;
+    let mut c = Consumer::open(&f.0, Group::Projection)?;
+    p.update("a", "first", "r1", None)?;
+    p.update("a", "second", "r2", None)?;
+    let mut claims = p.claim(clock() + 1, 2)?;
+    claims.sort_by_key(|c| c.id);
+    let mut handled = std::collections::BTreeSet::new();
+    let mut states = Vec::new();
+    for (input, key) in [(0, 0), (1, 1), (2, 1), (2, 2)] {
+        if input != 0 {
+            let mut event: Event = serde_json::from_slice(&claims[input - 1].bytes)?;
+            event.event_id = serde_json::from_slice::<Event>(&claims[key - 1].bytes)?.event_id;
+            if c.apply(&serde_json::to_vec(&event)?).is_ok() {
+                handled.insert(input);
+            }
+        }
+        let revision = f.count(
+            "projection",
+            "SELECT coalesce(max(revision),0) FROM projection",
+        );
+        let db = f.db("projection");
+        let seen = db
+            .prepare("SELECT event FROM seen ORDER BY event")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .map(|id| Ok(id?.rsplit(':').next().unwrap().parse::<usize>()?))
+            .collect::<Result<Vec<_>>>()?;
+        states.push(serde_json::json!({"input":input,"key":key,"revision":revision,"seen":seen,"handled":handled}));
+    }
+    assert_eq!(
+        serde_json::Value::Array(states),
+        serde_json::from_str::<serde_json::Value>(include_str!("../specs/identity-trace.json"))?
     );
     Ok(())
 }

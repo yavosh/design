@@ -4,8 +4,8 @@ structure State where
   deriving BEq, DecidableEq, Repr
 
 inductive Event where
-  | apply (r : Nat)     -- consumer.rs:54-81, event transaction
-  | snapshot (r : Nat)  -- consumer.rs:108-123, snapshot transaction
+  | apply (r : Nat)     -- src/consumer.rs:49-76, event transaction
+  | snapshot (r : Nat)  -- src/consumer.rs:103-118, snapshot transaction
   deriving Repr
 
 def init : State := ⟨0, []⟩
@@ -70,3 +70,46 @@ theorem unguarded_regresses :
 theorem observed : replay init [
     (.apply 2, ⟨2,[2]⟩), (.apply 1, ⟨2,[1,2]⟩), (.apply 2, ⟨2,[1,2]⟩),
     (.snapshot 3, ⟨3,[1,2]⟩), (.apply 3, ⟨3,[3,1,2]⟩)] = true := by decide
+
+-- The producer encodes a unique revision in the canonical key for this record.
+-- A mismatched identity fails validation before the SQLite transaction starts.
+def deliver (validate : Bool) (s : State) (revision key : Nat) : Option State :=
+  if validate && key != revision then none
+  else if key ∈ s.seen then some s
+  else some ⟨max s.rev revision, key :: s.seen⟩
+
+theorem canonical_agreement (s : State) (r : Nat) :
+    deliver true s r r = some (step true s (.apply r)) := by
+  by_cases h : r ∈ s.seen <;> simp [deliver,step,merge,h]
+
+theorem accepted_covers {s t : State} {r k : Nat} (hs : CoversSeen s)
+    (h : deliver true s r k = some t) : r ≤ t.rev := by
+  by_cases hk : k = r
+  · subst k
+    by_cases member : r ∈ s.seen
+    · simp [deliver,member] at h; subst t; exact hs r member
+    · simp [deliver,member] at h; subst t; exact Nat.le_max_right _ _
+  · simp [deliver,hk] at h
+
+theorem before_silently_drops :
+    (deliver false init 1 1 >>= fun s => deliver false s 2 1) = some ⟨1,[1]⟩ := by decide
+
+def Event.revision : Event → Nat
+  | .apply r | .snapshot r => r
+
+theorem exact_revision (s : State) (hs : CoversSeen s) (e : Event) :
+    (step true s e).rev = max s.rev e.revision := by
+  cases e with
+  | snapshot r => rfl
+  | apply r =>
+    by_cases member : r ∈ s.seen
+    · simpa [step,member,Event.revision] using (Nat.max_eq_left (hs r member)).symm
+    · simp [step,member,merge,Event.revision]
+
+theorem exact_history (events : List Event) (s : State) (hs : CoversSeen s) :
+    (events.foldl (step true) s).rev = events.foldl (fun n e => max n e.revision) s.rev := by
+  induction events generalizing s with
+  | nil => rfl
+  | cons e es ih =>
+    simp only [List.foldl_cons]
+    rw [ih _ (inv_step hs e), exact_revision s hs e]

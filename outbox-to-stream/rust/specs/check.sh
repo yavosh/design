@@ -11,6 +11,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+python3 check_trace.py
+cargo test --locked --manifest-path ../Cargo.toml --test pipeline trace_matches_proof_fixture
+
 files=()
 for f in checks.txt *.checks; do [[ -f "$f" ]] && files+=("$f"); done
 [[ ${#files[@]} -gt 0 ]] || { echo "no checks.txt or *.checks next to check.sh" >&2; exit 2; }

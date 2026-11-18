@@ -1,4 +1,7 @@
 Projection Projection.cfg pass bounded projection state
 Projection ProjectionUnguarded.cfg fail negative control without revision guard
-ProjectionTraces ProjectionTraces.cfg pass SQLite crash/reorder/bootstrap trace
+ProjectionTraces ProjectionTraces.cfg pass SQLite reopen, reorder, and bootstrap trace
 lean lean/Projection pass unbounded revision arithmetic and event histories
+Identity Identity.cfg pass accepted identities cover handled revisions
+Identity IdentityBefore.cfg fail actual consumer before validating canonical event IDs
+IdentityTraces IdentityTraces.cfg pass rejected alias and subsequent correct event in SQLite
