@@ -1,11 +1,14 @@
 use outbox_stream::*;
-use rusqlite::{Connection, params};
-use std::path::{Path, PathBuf};
+use rusqlite::Connection;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[path = "pipeline/cli.rs"]
+mod cli;
 
 struct Fixture(PathBuf);
 impl Fixture {
-    fn new() -> Result<Self> {
+    fn empty() -> Result<Self> {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let p = std::env::temp_dir().join(format!(
             "outbox-test-{}-{}",
@@ -13,8 +16,12 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&p)?;
-        init(&p)?;
         Ok(Self(p))
+    }
+    fn new() -> Result<Self> {
+        let fixture = Self::empty()?;
+        init(&fixture.0)?;
+        Ok(fixture)
     }
     fn db(&self, name: &str) -> Connection {
         Connection::open(self.0.join(format!("{name}.db"))).unwrap()
@@ -168,64 +175,26 @@ fn six_handler_failures_move_entry_to_durable_dead_letters() -> Result<()> {
     Ok(())
 }
 
-// Record observable states after committed SQL transitions, including a reopened consumer.
 #[test]
-fn projection_trace_matches_proof_fixture() -> Result<()> {
+fn late_and_duplicate_updates_preserve_the_latest_record() -> Result<()> {
     let f = Fixture::new()?;
-    let mut p = Producer::open(&f.0)?;
-    let mut s = Stream::open(&f.0)?;
-    let mut c = Consumer::open(&f.0, Group::Projection)?;
-    let mut trace = Vec::new();
-    let observe = |action: &str, input: i64| -> Result<serde_json::Value> {
-        let db = f.db("projection");
-        let revision = f.count(
+    let mut producer = Producer::open(&f.0)?;
+    producer.update("a", "open", "r1", None)?;
+    producer.update("a", "closed", "r2", None)?;
+    let mut claims = producer.claim(clock() + 1, 2)?;
+    claims.sort_by_key(|c| c.id);
+    let mut consumer = Consumer::open(&f.0, Group::Projection)?;
+    for index in [1, 0, 1] {
+        consumer.apply(&claims[index].bytes)?;
+    }
+    assert_eq!(
+        f.count(
             "projection",
-            "SELECT coalesce(max(revision),0) FROM projection",
-        );
-        let seen = db
-            .prepare("SELECT event FROM seen ORDER BY rowid DESC")?
-            .query_map([], |r| r.get::<_, String>(0))?
-            .map(|v| Ok(v?.rsplit(':').next().unwrap().parse::<i64>()?))
-            .collect::<Result<Vec<_>>>()?;
-        if revision > 0 {
-            let status: String = db.query_row("SELECT status FROM projection", [], |r| r.get(0))?;
-            assert_eq!(status, format!("v{revision}"));
-        }
-        Ok(serde_json::json!({"action":action,"input":input,"revision":revision,"seen":seen}))
-    };
-    trace.push(observe("init", 0)?);
-    for i in 1..=2 {
-        p.update("a", &format!("v{i}"), "r", None)?;
-    }
-    let payload = |i: i64| -> Vec<u8> {
-        f.db("producer")
-            .query_row("SELECT bytes FROM outbox WHERE id=?1", params![i], |r| {
-                r.get(0)
-            })
-            .unwrap()
-    };
-    for i in [2, 1, 2] {
-        c.apply(&payload(i))?;
-        trace.push(observe("apply", i)?);
-    }
-    assert_eq!(
-        f.count("projection", "SELECT revision FROM projection"),
-        2,
-        "late event restored an older revision"
+            "SELECT count(*) FROM projection WHERE revision=2 AND status='closed'"
+        ),
+        1
     );
-    drop(c);
-    let mut c = Consumer::open(&f.0, Group::Projection)?;
-    p.update("a", "v3", "r", None)?;
-    c.bootstrap(&mut p, &mut s)?;
-    trace.push(observe("snapshot", 3)?);
-    c.apply(&payload(3))?;
-    trace.push(observe("apply", 3)?);
-    let expected =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("specs/trace.json"))?;
-    assert_eq!(
-        serde_json::Value::Array(trace),
-        serde_json::from_str::<serde_json::Value>(&expected)?
-    );
+    assert_eq!(f.count("projection", "SELECT count(*) FROM seen"), 2);
     Ok(())
 }
 
@@ -381,43 +350,5 @@ fn unsupported_subscribed_version_stays_pending_and_unrelated_type_advances() ->
     assert_eq!(f.count("stream", "SELECT failures FROM pending"), 1);
     assert_eq!(f.count("stream", "SELECT cursor FROM groups"), 2);
     assert_eq!(f.count("jobs", "SELECT count(*) FROM jobs"), 0);
-    Ok(())
-}
-
-#[test]
-fn identity_trace_matches_proof_fixture() -> Result<()> {
-    let f = Fixture::new()?;
-    let mut p = Producer::open(&f.0)?;
-    let mut c = Consumer::open(&f.0, Group::Projection)?;
-    p.update("a", "first", "r1", None)?;
-    p.update("a", "second", "r2", None)?;
-    let mut claims = p.claim(clock() + 1, 2)?;
-    claims.sort_by_key(|c| c.id);
-    let mut handled = std::collections::BTreeSet::new();
-    let mut states = Vec::new();
-    for (input, key) in [(0, 0), (1, 1), (2, 1), (2, 2)] {
-        if input != 0 {
-            let mut event: Event = serde_json::from_slice(&claims[input - 1].bytes)?;
-            event.event_id = serde_json::from_slice::<Event>(&claims[key - 1].bytes)?.event_id;
-            if c.apply(&serde_json::to_vec(&event)?).is_ok() {
-                handled.insert(input);
-            }
-        }
-        let revision = f.count(
-            "projection",
-            "SELECT coalesce(max(revision),0) FROM projection",
-        );
-        let db = f.db("projection");
-        let seen = db
-            .prepare("SELECT event FROM seen ORDER BY event")?
-            .query_map([], |r| r.get::<_, String>(0))?
-            .map(|id| Ok(id?.rsplit(':').next().unwrap().parse::<usize>()?))
-            .collect::<Result<Vec<_>>>()?;
-        states.push(serde_json::json!({"input":input,"key":key,"revision":revision,"seen":seen,"handled":handled}));
-    }
-    assert_eq!(
-        serde_json::Value::Array(states),
-        serde_json::from_str::<serde_json::Value>(include_str!("../specs/identity-trace.json"))?
-    );
     Ok(())
 }

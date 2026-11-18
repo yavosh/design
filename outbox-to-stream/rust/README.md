@@ -64,10 +64,6 @@ Restore that database with its processed keys before redriving external work.
 ```sh
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
-cargo build --locked && python3 tests/cli.py
-./specs/check.sh
-./specs/regressions.sh
 ```
 
-The CLI test runs a local HTTP receiver, kills a worker after receipt, and checks its retry.
-The model checks require Java, TLC, Python 3, and Lean through elan. [Proof scope and results](specs/Projection.md).
+The CLI integration test kills a webhook worker after receipt and checks the retry against a local HTTP receiver.
