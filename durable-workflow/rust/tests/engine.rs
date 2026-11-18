@@ -163,6 +163,21 @@ fn timers_budgets_and_operator_retry_survive_restart() -> Result<()> {
     Ok(())
 }
 #[test]
+fn recorded_failure_reason_is_bounded_and_single_line() -> Result<()> {
+    let mut f = Fixture::new()?;
+    let id = f.start(&one())?;
+    let c = claim(&mut f.engine, 100);
+    let reason = format!("service\nunavailable {}", "é".repeat(600));
+    f.engine.record(&c, Outcome::Failed { reason }, 100)?;
+    let state = f.engine.status(id)?;
+    let reason = state["reason"].as_str().unwrap();
+    assert!(reason.starts_with("service unavailable "));
+    assert_eq!(reason.chars().count(), 512);
+    assert_eq!(f.engine.audit(id)?.last().unwrap()["reason"], reason);
+    Ok(())
+}
+
+#[test]
 fn record_rolls_back_on_successor_or_audit_failure() -> Result<()> {
     let mut f = Fixture::new()?;
     let id = f.start(&onboarding())?;

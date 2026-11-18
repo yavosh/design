@@ -49,9 +49,12 @@ Back up and restore both databases from the same point in time. Stop workers and
 New runs carry a random ID. If a restored instance encounters another run's saved result, the activity fails.
 When upgrading, stop old workers and run `init` on the existing data directory to add the request-key index.
 Existing runs keep their original event IDs. New events use `<runId>:<step>`.
+During a restore drill, match each completed step to its operation and event. Check the run ID and entity before restarting workers.
 
 Workers retry busy claims. If a write lock blocks the result, the worker logs `record_deferred` and the lease schedules recovery.
-Activity errors appear in the audit and worker stderr. Return error messages suitable for both.
+A committed failure emits `step_failed` on stderr. Match its `runId`, step, and dispatch number to the audit.
+Older runs show a null `runId`. Use their instance number within a matched backup.
+Custom activities should return operator-safe reasons in `Retry` and `Failed`. Raw exception text can contain input data.
 
 The CLI selects a definition by explicit key. Author, reviewer, and operator arguments represent trusted caller identities.
 The library accepts an injected scheduling clock. Publication timestamps, audit entries, and worker leases use the database clock.
