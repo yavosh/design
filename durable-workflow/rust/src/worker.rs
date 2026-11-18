@@ -59,7 +59,7 @@ impl Engine {
     }
     pub fn status(&self, id: i64) -> Result<Value> {
         let json:String=self.db.query_row(
-            "SELECT json_object('id',i.id,'status',i.status,'step',current_step,'version',version,
+            "SELECT json_object('id',i.id,'runId',json_extract(i.selection_inputs,'$.runId'),'status',i.status,'step',current_step,'version',version,
              'stepStatus',e.status,'attempts',attempts,'dispatch',dispatch_count,'deferrals',defer_count,
              'nextAt',next_at,'lastProgress',last_progress_at,'reason',failure_reason)
              FROM instance i JOIN execution e ON i.id=e.instance AND i.current_step=e.step
@@ -68,9 +68,9 @@ impl Engine {
         Ok(serde_json::from_str(&json)?)
     }
     pub fn audit(&self, id: i64) -> Result<Vec<Value>> {
-        let mut q=self.db.prepare("SELECT json_object('seq',seq,'at',at,'step',step,'status',status,'actor',actor,'outcome',detail,
+        let mut q=self.db.prepare("SELECT json_object('seq',seq,'runId',json_extract(i.selection_inputs,'$.runId'),'at',at,'step',step,'status',a.status,'actor',actor,'outcome',detail,
             'attempt',attempts,'dispatch',dispatch,'default',default_target,'target',target,'override',was_override,'reason',reason)
-            FROM audit WHERE instance=?1 ORDER BY seq")?;
+            FROM audit a JOIN instance i ON i.id=a.instance WHERE a.instance=?1 ORDER BY seq")?;
         let mut rows = Vec::new();
         for v in q.query_map([id], |r| r.get::<_, String>(0))? {
             rows.push(serde_json::from_str(&v?)?);
@@ -104,7 +104,7 @@ pub fn execute(
     let started = Instant::now();
     eprintln!(
         "{}",
-        serde_json::json!({"event":"step_started","step":c.step,"instance":c.instance,"dispatch":c.dispatch})
+        serde_json::json!({"event":"step_started","step":c.step,"instance":c.instance,"runId":c.run_id,"dispatch":c.dispatch})
     );
     let cancel = Arc::new(AtomicBool::new(false));
     let (send, receive) = mpsc::sync_channel(1);
@@ -117,12 +117,23 @@ pub fn execute(
     let outcome = match receive.recv_timeout(Duration::from_secs(c.max_duration.into())) {
         Ok(Ok(result)) => result,
         Ok(Err(error)) => {
-            let detail: String = error.to_string().chars().take(512).collect();
-            let reason = format!("activity error: {detail}");
+            // Database messages and arbitrary errors can contain workflow input.
+            let reason = if let Some(write) = error.downcast_ref::<activity::WriteError>() {
+                format!("activity error: {write}")
+            } else if let Some(code) = error
+                .downcast_ref::<rusqlite::Error>()
+                .and_then(|e| e.sqlite_error())
+            {
+                format!("activity database error: {code}")
+            } else if let Some(io) = error.downcast_ref::<std::io::Error>() {
+                format!("activity I/O error: {}", io.kind())
+            } else {
+                "activity returned an error".into()
+            };
             eprintln!(
                 "{}",
                 serde_json::json!({
-                    "event":"activity_error","instance":c.instance,"step":c.step,
+                    "event":"activity_error","instance":c.instance,"runId":c.run_id,"step":c.step,
                     "dispatch":c.dispatch,"reason":reason
                 })
             );
@@ -150,7 +161,7 @@ pub fn execute(
             eprintln!(
                 "{}",
                 serde_json::json!({
-                    "event":"record_deferred","instance":c.instance,"step":c.step,
+                    "event":"record_deferred","instance":c.instance,"runId":c.run_id,"step":c.step,
                     "dispatch":c.dispatch,"reason":error.to_string()
                 })
             );
@@ -161,7 +172,7 @@ pub fn execute(
     eprintln!(
         "{}",
         serde_json::json!({
-            "event":"step_finished","instance":c.instance,"step":c.step,"dispatch":c.dispatch,
+            "event":"step_finished","instance":c.instance,"runId":c.run_id,"step":c.step,"dispatch":c.dispatch,
             "durationMs":started.elapsed().as_millis(),"recorded":recorded
         })
     );

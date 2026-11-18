@@ -23,6 +23,25 @@ pub fn onboarding() -> Definition {
 pub trait Activity: Send + Sync + 'static {
     fn invoke(&self, claim: &Claim, cancel: &AtomicBool) -> Result<Outcome>;
 }
+#[derive(Debug)]
+pub(crate) struct WriteError(&'static str, rusqlite::Error);
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} insert failed", self.0)?;
+        if let Some(code) = self.1.sqlite_error() {
+            write!(f, " ({code})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for WriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.1)
+    }
+}
+
 pub struct Onboarding {
     path: PathBuf,
 }
@@ -143,11 +162,13 @@ impl Activity for Onboarding {
                 c.entity,
                 serde_json::to_string(&outcome)?
             ],
-        )?;
+        )
+        .map_err(|e| WriteError("operation", e))?;
         tx.execute(
             "INSERT INTO outbox(instance,step,event) VALUES(?1,?2,?3)",
             params![c.instance, c.step, event.to_string()],
-        )?;
+        )
+        .map_err(|e| WriteError("outbox", e))?;
         tx.commit()?;
         Ok(outcome)
     }

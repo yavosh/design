@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write;
 
 pub const RECOVERY_MARGIN: i64 = 30;
 #[derive(Debug, Clone)]
@@ -264,6 +265,16 @@ impl Engine {
                 override_route = false;
             }
         }
+        let diagnostic;
+        if let Some(why) = reason.filter(|_| charged != 0 || state == "FAILED") {
+            diagnostic = why
+                .trim()
+                .chars()
+                .take(512)
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect::<String>();
+            reason = Some(diagnostic.trim());
+        }
         if state == "FAILED" && reason.is_none_or(|r| r.trim().is_empty()) {
             reason = Some("activity failed without a reason")
         }
@@ -312,6 +323,16 @@ impl Engine {
             params![c.instance,reason,at])?;
         }
         tx.commit()?;
+        if state == "FAILED" {
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "{}",
+                serde_json::json!({
+                    "event":"step_failed", "instance":c.instance, "runId":c.run_id,
+                    "step":c.step, "dispatch":c.dispatch, "reason":reason
+                })
+            );
+        }
         Ok(true)
     }
     pub fn retry(&mut self, id: i64, operator: &str, at: i64) -> Result<()> {
