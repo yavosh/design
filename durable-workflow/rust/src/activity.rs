@@ -48,7 +48,7 @@ impl Activity for Onboarding {
             return Err("unknown onboarding activity".into());
         }
         let mut db = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
-        db.busy_timeout(Duration::ZERO)?;
+        db.busy_timeout(Duration::from_millis(50))?;
         let tx = match db.transaction_with_behavior(TransactionBehavior::Immediate) {
             Ok(tx) => tx,
             Err(e) if e.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) => {
@@ -56,15 +56,50 @@ impl Activity for Onboarding {
             }
             Err(e) => return Err(e.into()),
         };
-        if let Some(saved) = tx
+        // A restore can reuse an instance number, even when its new first step differs.
+        let saved = tx
             .query_row(
-                "SELECT result FROM operation WHERE instance=?1 AND step=?2",
+                "SELECT o.step,o.entity,o.result,b.event
+             FROM operation o LEFT JOIN outbox b ON b.instance=o.instance AND b.step=o.step
+             WHERE o.instance=?1 ORDER BY o.step=?2 DESC LIMIT 1",
                 params![c.instance, c.step],
-                |r| r.get::<_, String>(0),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    ))
+                },
             )
-            .optional()?
-        {
-            return Ok(serde_json::from_str(&saved)?);
+            .optional()?;
+        if let Some((step, entity, saved, event)) = saved {
+            let event = event
+                .map(|raw| serde_json::from_str::<Value>(&raw))
+                .transpose()?;
+            let same_owner = event.as_ref().is_some_and(|e| {
+                e["instance"] == c.instance
+                    && e["step"] == step
+                    && e["entityKind"] == c.kind
+                    && e["entityId"] == c.entity
+                    && match &c.run_id {
+                        Some(id) => e["runId"] == *id,
+                        None => e.get("runId").is_none(),
+                    }
+            });
+            let mismatch = || Outcome::Failed {
+                reason: "stored activity belongs to a different workflow or input".into(),
+            };
+            if entity != c.entity || !same_owner {
+                return Ok(mismatch());
+            }
+            if step == c.step {
+                let outcome: Outcome = serde_json::from_str(&saved)?;
+                if !matches!(&outcome, Outcome::Done { payload, .. } if *payload == c.input) {
+                    return Ok(mismatch());
+                }
+                return Ok(outcome);
+            }
         }
         if cancel.load(Ordering::Acquire) {
             return Err("activity cancelled".into());
@@ -93,9 +128,13 @@ impl Activity for Onboarding {
             }),
             payload: c.input.clone(),
         };
-        let event = serde_json::json!({"eventId":format!("{}:{}",c.instance,c.step),"type":"OnboardingStepCompleted",
+        let event_prefix = c.run_id.clone().unwrap_or_else(|| c.instance.to_string());
+        let mut event = serde_json::json!({"eventId":format!("{event_prefix}:{}",c.step),"type":"OnboardingStepCompleted",
             "instance":c.instance,"entityKind":c.kind,"entityId":c.entity,"step":c.step,
             "traceparent":c.input.get("traceparent")});
+        if let Some(run_id) = &c.run_id {
+            event["runId"] = run_id.clone().into();
+        }
         tx.execute(
             "INSERT INTO operation VALUES(?1,?2,?3,?4)",
             params![

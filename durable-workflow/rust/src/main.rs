@@ -17,7 +17,7 @@ const USAGE: &str = "durable-workflow DATA_DIR COMMAND
   edit DRAFT AUTHOR DEFINITION.json | submit DRAFT AUTHOR
   approve DRAFT REVIEWER | reject DRAFT REVIEWER
   simulate DEFINITION.json [CHOICES_JSON]
-  start NAME ENTITY_KIND ENTITY_ID [INPUT_JSON]
+  start NAME ENTITY_KIND ENTITY_ID [INPUT_JSON] [--request-key KEY]
   worker CONCURRENCY [STAGE ...]
   status INSTANCE | audit INSTANCE | retry INSTANCE OPERATOR | coverage | metrics";
 
@@ -70,12 +70,16 @@ fn main() -> Result<()> {
             Value::Null
         }
         ["start", name, kind, entity, rest @ ..] => {
-            let input = match rest {
+            let (input_args, request_key) = match rest {
+                [input @ .., "--request-key", key] => (input, Some(*key)),
+                _ => (rest, None),
+            };
+            let input = match input_args {
                 [] => Value::Null,
                 [json] => serde_json::from_str(json)?,
                 _ => return Err(USAGE.into()),
             };
-            json!(engine.start(name, kind, entity, &input, now())?)
+            json!(engine.start_with_request_key(name, kind, entity, &input, now(), request_key)?)
         }
         ["worker", limit, filter @ ..] => {
             engine.validate_installed(CATALOG)?;

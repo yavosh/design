@@ -80,6 +80,14 @@ impl Engine {
 }
 const CANCEL_GRACE: Duration = Duration::from_secs(2);
 const _: () = assert!(RECOVERY_MARGIN > CANCEL_GRACE.as_secs() as i64);
+fn database_busy(error: &(dyn std::error::Error + 'static)) -> bool {
+    matches!(
+        error
+            .downcast_ref::<rusqlite::Error>()
+            .and_then(|e| e.sqlite_error_code()),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
 fn retry(reason: &str) -> Outcome {
     Outcome::Retry {
         delay: 1,
@@ -108,7 +116,18 @@ pub fn execute(
     let mut abandon = false;
     let outcome = match receive.recv_timeout(Duration::from_secs(c.max_duration.into())) {
         Ok(Ok(result)) => result,
-        Ok(Err(_)) => retry("activity error"),
+        Ok(Err(error)) => {
+            let detail: String = error.to_string().chars().take(512).collect();
+            let reason = format!("activity error: {detail}");
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "event":"activity_error","instance":c.instance,"step":c.step,
+                    "dispatch":c.dispatch,"reason":reason
+                })
+            );
+            retry(&reason)
+        }
         Err(mpsc::RecvTimeoutError::Disconnected) => retry("activity panicked"),
         Err(mpsc::RecvTimeoutError::Timeout) => {
             cancel.store(true, Ordering::Release);
@@ -124,7 +143,21 @@ pub fn execute(
         eprintln!("activity ignored cancellation; terminating worker");
         std::process::exit(70);
     }
-    let recorded = result?;
+    let recorded = match result {
+        Ok(recorded) => recorded,
+        Err(error) if database_busy(error.as_ref()) => {
+            // The claim stays RUNNING. Its lease makes this dispatch recoverable.
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "event":"record_deferred","instance":c.instance,"step":c.step,
+                    "dispatch":c.dispatch,"reason":error.to_string()
+                })
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     eprintln!(
         "{}",
         serde_json::json!({
@@ -150,14 +183,12 @@ pub fn run(
         e.db.query_row("SELECT lower(hex(randomblob(16)))", [], |r| r.get(0))?;
     let mut active: Vec<thread::JoinHandle<Result<()>>> = Vec::new();
     let mut heartbeat = Instant::now();
+    let mut blocked = false;
     let result = (|| -> Result<()> {
         while !stop.load(Ordering::Acquire) {
             if Instant::now() >= heartbeat {
-                if e.heartbeat(&id, &stages, false)
-                    .and_then(|_| e.reap())
-                    .is_err()
-                {
-                    eprintln!("registry update failed");
+                if let Err(error) = e.heartbeat(&id, &stages, false).and_then(|_| e.reap()) {
+                    eprintln!("registry update failed: {error}");
                 }
                 heartbeat = Instant::now() + Duration::from_secs(15);
             }
@@ -174,7 +205,21 @@ pub fn run(
             }
             let slots = limit - active.len() as u16;
             if slots > 0 {
-                for c in e.claim(&stages, slots, clock())? {
+                let claims = match e.claim(&stages, slots, clock()) {
+                    Ok(claims) => {
+                        blocked = false;
+                        claims
+                    }
+                    Err(error) if database_busy(error.as_ref()) => {
+                        if !blocked {
+                            eprintln!("worker {id} waiting to claim steps: {error}");
+                            blocked = true;
+                        }
+                        Vec::new()
+                    }
+                    Err(error) => return Err(error),
+                };
+                for c in claims {
                     let path = path.clone();
                     let activity = Arc::clone(&activity);
                     active.push(thread::spawn(move || execute(&path, c, activity, clock)));
@@ -187,6 +232,11 @@ pub fn run(
     for task in active {
         task.join().map_err(|_| "worker thread panicked")??;
     }
-    e.deregister(&id)?;
+    if let Err(error) = e.deregister(&id) {
+        if !database_busy(error.as_ref()) {
+            return result.and(Err(error));
+        }
+        eprintln!("worker {id} could not deregister before lease expiry: {error}");
+    }
     result
 }
