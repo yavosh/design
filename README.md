@@ -6,7 +6,7 @@ Keep each design in its own folder.
 
 | Design | Document | Playground |
 | --- | --- | --- |
-| Outbox to stream | [HTML guide](https://yavosh.github.io/design/eda/guide/) · [Markdown](outbox-to-stream/Outbox-to-Stream%20Playbook.md) | [Open playground](https://yavosh.github.io/design/eda/) · [Run locally](outbox-to-stream/playground/README.md) |
+| Outbox to stream | [HTML guide](https://yavosh.github.io/design/eda/guide/) · [Markdown](outbox-to-stream/Outbox-to-Stream%20Playbook.md) · [Rust implementation](outbox-to-stream/rust/README.md) | [Open playground](https://yavosh.github.io/design/eda/) · [Run locally](outbox-to-stream/playground/README.md) |
 | Durable workflow engine | [HTML guide](https://yavosh.github.io/design/workflow/guide/) · [Markdown](durable-workflow/Durable%20Workflow%20Engine%20Playbook.md) | [Open playground](https://yavosh.github.io/design/workflow/) · [Run locally](durable-workflow/playground/README.md) |
 
 The website index lives in `site/index.html`. Each published guide has its own URL.
